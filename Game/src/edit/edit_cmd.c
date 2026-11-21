@@ -310,6 +310,77 @@ int editGetCmdValue(char *str)
     return 0;
 }
 
+static void editCmdOpenTextureBindSource(void)
+{
+    if (sel_count == 1 && sel_list[0].def_tracker && sel_list[0].def_tracker->def && sel_list[0].def_tracker->def->model && temp_int < sel_list[0].def_tracker->def->model->tex_count)
+    {
+        TexBind *bind;
+        int i, tri_idx = 0;
+        for (i = 0; i < temp_int; i++)
+            tri_idx += sel_list[0].def_tracker->def->model->tex_idx[i].count;
+        bind = getTexWithReplaces(sel_list[0].def_tracker, tri_idx);
+        if (bind && bind->texopt && bind->texopt->file_name)
+        {
+            char filename[MAX_PATH];
+            fileLocateWrite(bind->texopt->file_name, filename);
+            if (filename[0])
+                editTrickFile(filename, bind->texopt->name, 1);
+        }
+    }
+}
+
+static void editCmdOpenMaterialSource(void)
+{
+    int idx = temp_int % 10, layer = temp_int / 10;
+    if (sel_count == 1 && sel_list[0].def_tracker && sel_list[0].def_tracker->def && sel_list[0].def_tracker->def->model && idx < sel_list[0].def_tracker->def->model->tex_count)
+    {
+        TexBind *bind;
+        int i, tri_idx = 0;
+        for (i = 0; i < idx; i++)
+            tri_idx += sel_list[0].def_tracker->def->model->tex_idx[i].count;
+        bind = getTexWithReplaces(sel_list[0].def_tracker, tri_idx);
+        if (bind->tex_layers[layer])
+        {
+            char buffer[1024], buffer2[1024];
+            BasicTexture *tex = bind->tex_layers[layer]->actualTexture;
+            sprintf(buffer, "texture_library/%s", tex->dirname);
+            fileLocateWrite(buffer, buffer2);
+            strstriReplace(buffer2, "/data/", "/src/");
+            ShellExecuteA(NULL, "explore", buffer2, NULL, buffer2, SW_SHOW);
+        }
+    }
+}
+
+static void editCmdOpenModelSource(void)
+{
+    if (sel_count == 1 && sel_list[0].def_tracker && sel_list[0].def_tracker->def && sel_list[0].def_tracker->def->model)
+    {
+        static char buffer[1024];
+        char *s;
+        fileLocateWrite(sel_list[0].def_tracker->def->model->filename, buffer);
+        strstriReplace(buffer, "/data/", "/src/");
+        s = strrchr(buffer, '/');
+        if (s)
+            *s = 0;
+        ShellExecuteA(NULL, "explore", buffer, NULL, NULL, SW_SHOW);
+    }
+}
+
+static void editCmdOpenTrickSource(void)
+{
+    if (sel_count == 1 && sel_list[0].def_tracker && sel_list[0].def_tracker->def && sel_list[0].def_tracker->def->model)
+    {
+        TrickNode *trick = sel_list[0].def_tracker->def->model->trick;
+        if (trick && trick->info)
+        {
+            char filename[MAX_PATH];
+            fileLocateWrite(trick->info->file_name, filename);
+            if (filename[0])
+                editTrickFile(filename, trick->info->name, 0);
+        }
+    }
+}
+
 int editCmdParse(char *str, int x, int y)
 {
     Cmd            *cmd;
@@ -404,69 +475,16 @@ int editCmdParse(char *str, int x, int y)
         }
 
         xcase CMD_EDITMODEL:
-            if (sel_count == 1 && sel_list[0].def_tracker && sel_list[0].def_tracker->def && sel_list[0].def_tracker->def->model)
-            {
-                static char buffer[1024];
-                char *s;
-                fileLocateWrite(sel_list[0].def_tracker->def->model->filename, buffer);
-                strstriReplace(buffer, "/data/", "/src/");
-                s = strrchr(buffer, '/');
-                if (s)
-                    *s = 0;
-                ShellExecuteA(NULL, "explore", buffer, NULL, NULL, SW_SHOW);
-            }
+            editCmdOpenModelSource();
 
         xcase CMD_EDITTRICK:
-            if (sel_count == 1 && sel_list[0].def_tracker && sel_list[0].def_tracker->def && sel_list[0].def_tracker->def->model)
-            {
-                TrickNode *trick = sel_list[0].def_tracker->def->model->trick;
-                if (trick && trick->info)
-                {
-                    char filename[MAX_PATH];
-                    fileLocateWrite(trick->info->file_name, filename);
-                    if (filename[0])
-                        editTrickFile(filename, trick->info->name, 0);
-                }
-            }
+            editCmdOpenTrickSource();
 
         xcase CMD_EDITTEXBIND:
-            if (sel_count == 1 && sel_list[0].def_tracker && sel_list[0].def_tracker->def && sel_list[0].def_tracker->def->model && temp_int < sel_list[0].def_tracker->def->model->tex_count)
-            {
-                TexBind *bind;
-                int i, tri_idx = 0;
-                for (i = 0; i < temp_int; i++)
-                    tri_idx += sel_list[0].def_tracker->def->model->tex_idx[i].count;
-                bind = getTexWithReplaces(sel_list[0].def_tracker, tri_idx);
-                if (bind && bind->texopt && bind->texopt->file_name)
-                {
-                    char filename[MAX_PATH];
-                    fileLocateWrite(bind->texopt->file_name, filename);
-                    if (filename[0])
-                        editTrickFile(filename, bind->texopt->name, 1);
-                }
-            }
+            editCmdOpenTextureBindSource();
 
         xcase CMD_EDITMATERIAL:
-        {
-            int idx = temp_int % 10, layer = temp_int / 10;
-            if (sel_count == 1 && sel_list[0].def_tracker && sel_list[0].def_tracker->def && sel_list[0].def_tracker->def->model && idx < sel_list[0].def_tracker->def->model->tex_count)
-            {
-                TexBind *bind;
-                int i, tri_idx = 0;
-                for (i = 0; i < idx; i++)
-                    tri_idx += sel_list[0].def_tracker->def->model->tex_idx[i].count;
-                bind = getTexWithReplaces(sel_list[0].def_tracker, tri_idx);
-                if (bind->tex_layers[layer])
-                {
-                    char buffer[1024], buffer2[1024];
-                    BasicTexture *tex = bind->tex_layers[layer]->actualTexture;
-                    sprintf(buffer, "texture_library/%s", tex->dirname);
-                    fileLocateWrite(buffer, buffer2);
-                    strstriReplace(buffer2, "/data/", "/src/");
-                    ShellExecuteA(NULL, "explore", buffer2, NULL, buffer2, SW_SHOW);
-                }
-            }
-        }
+            editCmdOpenMaterialSource();
 
         xcase CMD_MAKEDESTRUCTIBLEOBJECT:
             if( sel_count > 1 || sel_count < 1 )
@@ -730,24 +748,164 @@ NotFromDef:
 char ** textureSwapNames;
 int        textureSwapNameIndex;
 
+#define TEXTURE_SWAP_NAME_MAX      500
+#define TEXTURE_SWAP_NAME_LEN      256
+static char    textureSwapNamePool[TEXTURE_SWAP_NAME_MAX][TEXTURE_SWAP_NAME_LEN];
+static char *  textureSwapNamePtrs[TEXTURE_SWAP_NAME_MAX];
+
 static FileScanAction randomTextureCallback(char * dir,struct _finddata32_t * fileData)
 {
-    if (strchr(fileData->name,'.')!=NULL)
+    if (textureSwapNameIndex < TEXTURE_SWAP_NAME_MAX && strchr(fileData->name,'.')!=NULL)
         strcpy(textureSwapNames[textureSwapNameIndex++],fileData->name);
     return FSA_NO_EXPLORE_DIRECTORY;
+}
+
+// Pick a random texture filename from the data dirs for the given library path
+// (the textual path suffix after the fixed "c:/game/src/texture_library/" prefix).
+// Writes the chosen base name into `fileName` and returns it, or NULL when no
+// candidate texture was found. Uses fixed static storage rather than _alloca so
+// the pool lifetime is not tied to the caller's stack frame.
+static char * pickRandomTextureName(const char * scanPath, char * fileName)
+{
+    int i;
+    int pick;
+    textureSwapNames=textureSwapNamePtrs;
+    for (i=0;i<TEXTURE_SWAP_NAME_MAX;i++)
+        textureSwapNamePtrs[i]=textureSwapNamePool[i];
+    textureSwapNameIndex=0;
+    fileScanAllDataDirs(scanPath,randomTextureCallback);
+    if (textureSwapNameIndex<=0)
+        return NULL;
+    pick=rand()%textureSwapNameIndex;
+    sprintf(fileName,textureSwapNames[pick]);
+    if (strrchr(fileName,'.')!=NULL)
+        *strrchr(fileName,'.')='\0';
+    return fileName;
+}
+
+// Remove every non-composite/composite swap whose tex_name matches
+// `originalTexture` (the menu entry name with the " ^3..." suffix stripped).
+// Also trims the " ^3..." suffix off the live menu entry name as it goes.
+static void textureSwapRemoveEntry(MenuEntry *me, DefTexSwap ***def_tex_swaps,
+        const char *originalTexture)
+{
+    int i;
+    char *s;
+    for(i = eaSize(def_tex_swaps)-1; i >= 0; --i)
+    {
+        if(strcmp((*def_tex_swaps)[i]->tex_name, originalTexture)==0)
+        {
+            deleteDefTexSwap(eaRemove(def_tex_swaps, i));
+            if((s = strstr(me->name," ^3")) != NULL)
+                *s='\0';
+        }
+    }
+}
+
+// Build a swap from the chosen file: `menuName` supplies the source texture name
+// (first whitespace-delimited token) and `fileName` supplies the replacement
+// (extension and path trimmed). Returns NULL when the swap cannot be created or
+// names a texture that does not exist (an alert is shown in that case).
+static DefTexSwap * textureSwapCreateResolved(const char *menuName,
+        const char *resolvedFileName, int composite)
+{
+    char tex[MAX_PATH];
+    char trimmed[MAX_PATH];
+    char *s;
+    DefTexSwap * dts;
+
+    strncpy(trimmed, resolvedFileName, MAX_PATH - 1);
+    trimmed[MAX_PATH - 1] = '\0';
+
+    strncpy(tex, menuName, MAX_PATH - 1);
+    tex[MAX_PATH - 1] = '\0';
+    if(s = strchr(tex, ' ')) // assignment
+        *s = '\0';
+
+    // replace with 'filename', with the extension and path trimmed
+    if(s = strrchr(trimmed, '.')) // assignment
+        *s = '\0';
+    s = strrchr(trimmed, '\\');
+    if (!s++)
+        s = trimmed;
+
+    dts = createDefTexSwap(tex, s, composite);
+    if (!dts)
+        return NULL;
+    if(dts->composite ? !dts->comp_replace_bind : !dts->replace_bind) // since this is a union now, a single check would suffice :P... but I'll leave that as an exercise for the compiler
+    {
+        winMsgAlert("No texture by that name exists.");
+        deleteDefTexSwap(dts);
+        return NULL;
+    }
+    return dts;
+}
+
+// Splice `dts` into the def's swap list: replace an existing entry with the same
+// tex_name in place, or append a new one. The menu entry name is updated with the
+// " ^3<replace_name>" suffix. The caller must run editUpdateTracker (which
+// serialises the full swap array to the server) BEFORE calling
+// textureSwapUndoAfterSend(); the undo restores the pre-send array shape so the
+// transient `dts` is not left owned by the def.
+typedef struct {
+    int          replaceFlag;
+    int          replacedIndex;
+    DefTexSwap * replacedTexture;
+} TextureSwapApply;
+
+static TextureSwapApply textureSwapApplyToDef(MenuEntry *me, DefTexSwap ***def_tex_swaps,
+        DefTexSwap *dts)
+{
+    TextureSwapApply apply = { false, -1, NULL };
+    int size;
+    int i;
+    char *s;
+
+    s=strstr(me->name," ^3");
+    if (s!=NULL)
+    {
+        int index = s - me->name;
+        estrRemove(&me->name, index, estrLength(&me->name) - index);
+    }
+    size=eaSize(def_tex_swaps);
+    for (i=0;i<size;i++)
+        if (strcmp((*def_tex_swaps)[i]->tex_name,dts->tex_name)==0) {
+            apply.replacedTexture=(*def_tex_swaps)[i];
+            (*def_tex_swaps)[i]=dts;
+            apply.replaceFlag=true;
+            apply.replacedIndex=i;
+            break;
+        }
+    if (!apply.replaceFlag) {
+        eaPush(def_tex_swaps,dts);
+    }
+    estrConcatStaticCharArray(&me->name, " ^3");
+    estrConcatCharString(&me->name, dts->replace_name);
+    return apply;
+}
+
+// Undo the transient splice performed by textureSwapApplyToDef, after the swap
+// array has been serialised. Mirrors the original in-place quirk: an appended
+// entry is dropped by shrinking the array (leaving the array's own copy intact
+// in the def), and a replaced entry is restored to the previous pointer. `dts` is
+// owned by the def for the duration of the send and is freed here.
+static void textureSwapUndoAfterSend(DefTexSwap ***def_tex_swaps, TextureSwapApply apply,
+        DefTexSwap *dts)
+{
+    if (!apply.replaceFlag)
+        eaSetSize(def_tex_swaps,eaSize(def_tex_swaps)-1);
+    else
+        (*def_tex_swaps)[apply.replacedIndex]=apply.replacedTexture;
+    deleteDefTexSwap(dts);
 }
 
 void editTextureMenuCallback(MenuEntry *me, ClickInfo *ci)
 {
     DefTexSwap *** def_tex_swaps;
     DefTexSwap * dts;
-    DefTexSwap * replacedTexture=NULL;
-    int replacedIndex=-1;
+    TextureSwapApply apply;
     char fileName[1024];
     char * s;
-    int i;
-    int size;
-    int replaceFlag;
     char originalTexture[TEXT_DIALOG_MAX_STRLEN];
     int composite;
     if (strcmp(me->parent->name,"Materials")==0)    //determine what kind of swap it is
@@ -769,15 +927,7 @@ void editTextureMenuCallback(MenuEntry *me, ClickInfo *ci)
     //if we are removing textures, take out the old texture, shrink down the array in an intelligent way
     if(edit_state.textureSwapRemove)
     {
-        for(i = eaSize(def_tex_swaps)-1; i >= 0; --i)
-        {
-            if(strcmp((*def_tex_swaps)[i]->tex_name, originalTexture)==0)
-            {
-                deleteDefTexSwap(eaRemove(def_tex_swaps, i));
-                if((s = strstr(me->name," ^3")) != NULL)
-                    *s='\0';
-            }
-        }
+        textureSwapRemoveEntry(me, def_tex_swaps, originalTexture);
         editUpdateTracker(edit_state.textureSwapTracker);
         edit_state.textureSwap=0;
         edit_state.textureSwapReopen=1;
@@ -791,21 +941,7 @@ void editTextureMenuCallback(MenuEntry *me, ClickInfo *ci)
     backSlashes(fileName);
 
     if (edit_state.textureSwapRandom) {
-        int pick;
-        textureSwapNames=(char **)_alloca(sizeof(char *)*500);
-        textureSwapNameIndex=0;
-        for (i=0;i<500;i++)
-            textureSwapNames[i]=(char *)_alloca(sizeof(char)*256);
-        fileScanAllDataDirs(fileName+12,randomTextureCallback);
-        if (textureSwapNameIndex>0) {
-            pick=rand()%textureSwapNameIndex;
-            sprintf(fileName,textureSwapNames[pick]);
-            if (strrchr(fileName,'.')!=NULL)
-                *strrchr(fileName,'.')='\0';
-            s=fileName;
-        } else {
-            s=NULL;
-        }
+        s=pickRandomTextureName(fileName+12,fileName);
     } else {
         if (strEndsWith(fileName, "\\"))
             strcat(fileName, "*.tga");
@@ -816,150 +952,113 @@ void editTextureMenuCallback(MenuEntry *me, ClickInfo *ci)
     if (s==NULL) return;
     if (fileName[0]=='\0') return;
 
-    {
-        char tex[MAX_PATH];
+    dts = textureSwapCreateResolved(me->name, fileName, composite);
+    if (!dts)
+        return;
 
-        strncpy(tex, me->name, MAX_PATH - 1);
-        tex[MAX_PATH - 1] = '\0';
-        if(s = strchr(tex, ' ')) // assignment
-            *s = '\0';
+    apply = textureSwapApplyToDef(me, def_tex_swaps, dts);
 
-        // replace with 'filename', with the extension and path trimmed
-        if(s = strrchr(fileName, '.')) // assignment
-            *s = '\0';
-        s = strrchr(fileName, '\\');
-        if (!s++)
-            s = fileName;
-
-        dts = createDefTexSwap(tex, s, composite);
-        if (!dts)
-        {
-            return;
-        }
-        if(dts->composite ? !dts->comp_replace_bind : !dts->replace_bind) // since this is a union now, a single check would suffice :P... but I'll leave that as an exercise for the compiler
-        {
-            winMsgAlert("No texture by that name exists.");
-            deleteDefTexSwap(dts);
-            return;
-        }
-    }
-
-    s=strstr(me->name," ^3");
-    if (s!=NULL)
-    {
-        int index = s - me->name;
-        estrRemove(&me->name, index, estrLength(&me->name) - index);
-    }
-    size=eaSize(def_tex_swaps);
-    replaceFlag=false;
-    for (i=0;i<size;i++)
-        if (strcmp((*def_tex_swaps)[i]->tex_name,dts->tex_name)==0) {
-            replacedTexture=(*def_tex_swaps)[i];
-            (*def_tex_swaps)[i]=dts;
-            replaceFlag=true;
-            replacedIndex=i;
-            break;
-        }
-    if (!replaceFlag)
-        eaPush(def_tex_swaps,dts);
-    estrConcatStaticCharArray(&me->name, " ^3");
-    estrConcatCharString(&me->name, dts->replace_name);
-
+    // Serialise the full swap array (including the transient `dts`) to the
+    // server BEFORE undoing the splice, matching the original ordering.
     editUpdateTracker(edit_state.textureSwapTracker);
-    if (!replaceFlag)
-        eaSetSize(def_tex_swaps,eaSize(def_tex_swaps)-1);
-    else
-        (*def_tex_swaps)[replacedIndex]=replacedTexture;
-    deleteDefTexSwap(dts);
+    textureSwapUndoAfterSend(def_tex_swaps, apply, dts);
     edit_state.textureSwap=0;
     edit_state.textureSwapReopen=1;
 }
 
-void editCmdAddBasicTexturesToMenu(Menu * textureMenu,DefTracker * tracker) {
+// Placeholder texture names that never get a swap entry in the texture menu.
+static int textureMenuIsPlaceholderName(const char *texName) {
+    return strcmp(texName,"white")==0 || strcmp(texName,"grey")==0
+        || strcmp(texName,"invisible")==0 || strcmp(texName,"dummy_bump")==0;
+}
+
+// Append the current swap for `texName` (if any) to `texName` in the "^3<name>"
+// form the menu uses. For composite swaps a blend-mode mismatch is flagged by
+// appending " ^2MISMATCH!" and returning non-zero; the caller colours the entry.
+static int textureMenuAppendSwapName(char *texName, int composite) {
+    DefTexSwap ***swaps = &edit_state.textureSwapTracker->def->def_tex_swaps;
+    int k;
+    for (k=0;k<eaSize(swaps);k++) {
+        DefTexSwap * dts=(*swaps)[k];
+        if (dts->composite!=composite || strcmp(dts->tex_name,texName)!=0)
+            continue;
+        if (composite && dts->comp_tex_bind && dts->comp_replace_bind)
+            if (dts->comp_replace_bind->bind_blend_mode.intval!=dts->comp_tex_bind->bind_blend_mode.intval) {
+                strcat(texName," ^3");
+                strcat(texName,dts->replace_name);
+                strcat(texName," ^2MISMATCH!");
+                return 1;
+            }
+        strcat(texName," ^3");
+        strcat(texName,dts->replace_name);
+        return 0;
+    }
+    return 0;
+}
+
+// Shared recursion skeleton for the basic/composite texture menus. The walk over
+// the tracker tree, the null guards and the open/close bracketing are identical;
+// only the per-node body differs, so the body is supplied by the caller.
+static void editCmdAddTexturesToMenu(Menu * textureMenu, DefTracker * tracker,
+        void (*addTexturesForModel)(Menu *, Model *)) {
     int i;
     if (tracker==NULL || tracker->def==NULL) return;
-    if (tracker->def && tracker->def->model && tracker->def->model->gld) {
-        Model * model=tracker->def->model;
-        for (i=0;i<model->tex_count;i++) {
-            char texName[256];
-            char path[512];
-            TexBind * texBind;
-            int j;
-            strcpy(texName,model->gld->texnames.strings[model->tex_idx[i].id]);
-            texBind=texFindComposite(texName);
-            if (texBind) {
-                for (j=0;j<ARRAY_SIZE(texBind->tex_layers);j++) {
-                    if (texBind->tex_layers[j]==NULL) continue;
-                    strcpy(texName,texBind->tex_layers[j]->name);
-                    if (strcmp(texName,"white")!=0 && strcmp(texName,"grey")!=0 && strcmp(texName,"invisible")!=0 && strcmp(texName,"dummy_bump")!=0) {
-                        int k;
-                        for (k=0;k<eaSize(&edit_state.textureSwapTracker->def->def_tex_swaps);k++) {
-                            DefTexSwap * dts=edit_state.textureSwapTracker->def->def_tex_swaps[k];
-                            if (dts->composite)
-                                continue;
-                            if (strcmp(dts->tex_name,texName)==0) {
-                                strcat(texName," ^3");
-                                strcat(texName,edit_state.textureSwapTracker->def->def_tex_swaps[k]->replace_name);
-                                break;
-                            }
-                        }
-                        strcpy(path,"Textures/");
-                        strcat(path,texName);
-                        addEntryToMenu(textureMenu,path,editTextureMenuCallback,(void *)(&edit_state.textureSwapTracker->def->def_tex_swaps));
-                    }
-                }
-            }
-        }
-    }
+    if (tracker->def->model && tracker->def->model->gld)
+        addTexturesForModel(textureMenu, tracker->def->model);
     trackerOpenEdit(tracker);
     for (i=0;i<tracker->count;i++)
-        editCmdAddBasicTexturesToMenu(textureMenu,&tracker->entries[i]);
+        editCmdAddTexturesToMenu(textureMenu,&tracker->entries[i],addTexturesForModel);
     trackerCloseEdit(tracker);
-    return;
+}
+
+static void editCmdAddBasicTexturesForModel(Menu * textureMenu, Model * model) {
+    int i;
+    for (i=0;i<model->tex_count;i++) {
+        char texName[256];
+        char path[512];
+        TexBind * texBind;
+        int j;
+        strcpy(texName,model->gld->texnames.strings[model->tex_idx[i].id]);
+        texBind=texFindComposite(texName);
+        if (!texBind)
+            continue;
+        for (j=0;j<ARRAY_SIZE(texBind->tex_layers);j++) {
+            if (texBind->tex_layers[j]==NULL) continue;
+            strcpy(texName,texBind->tex_layers[j]->name);
+            if (textureMenuIsPlaceholderName(texName)) continue;
+            textureMenuAppendSwapName(texName,0);
+            strcpy(path,"Textures/");
+            strcat(path,texName);
+            addEntryToMenu(textureMenu,path,editTextureMenuCallback,(void *)(&edit_state.textureSwapTracker->def->def_tex_swaps));
+        }
+    }
+}
+
+static void editCmdAddCompositeTexturesForModel(Menu * textureMenu, Model * model) {
+    int i;
+    for (i=0;i<model->tex_count;i++) {
+        char texName[256];
+        char path[512];
+        MenuEntry * me;
+        int mismatch;
+        strcpy(texName,model->gld->texnames.strings[model->tex_idx[i].id]);
+        texFindComposite(texName);
+        if (textureMenuIsPlaceholderName(texName)) continue;
+        mismatch=textureMenuAppendSwapName(texName,1);
+        strcpy(path,"Materials/");
+        strcat(path,texName);
+        me=addEntryToMenu(textureMenu,path,editTextureMenuCallback,(void *)(&edit_state.textureSwapTracker->def->def_tex_swaps));
+        if (mismatch)
+            me->color=0xFF0000FF;
+    }
+}
+
+void editCmdAddBasicTexturesToMenu(Menu * textureMenu,DefTracker * tracker) {
+    editCmdAddTexturesToMenu(textureMenu,tracker,editCmdAddBasicTexturesForModel);
 }
 
 void editCmdAddCompositeTexturesToMenu(Menu * textureMenu,DefTracker * tracker) {
-    int i;
-    int error=0;
-    if (tracker==NULL || tracker->def==NULL) return;
-    if (tracker->def && tracker->def->model && tracker->def->model->gld) {
-        Model * model=tracker->def->model;
-        for (i=0;i<model->tex_count;i++) {
-            char texName[256];
-            char path[512];
-            TexBind * texBind;
-            strcpy(texName,model->gld->texnames.strings[model->tex_idx[i].id]);
-            texBind=texFindComposite(texName);
-            if (strcmp(texName,"white")!=0 && strcmp(texName,"grey")!=0 && strcmp(texName,"invisible")!=0 && strcmp(texName,"dummy_bump")!=0) {
-                int k;
-                MenuEntry * me;
-                for (k=0;k<eaSize(&edit_state.textureSwapTracker->def->def_tex_swaps);k++) {
-                    DefTexSwap * dts=edit_state.textureSwapTracker->def->def_tex_swaps[k];
-                    if (dts->composite && strcmp(dts->tex_name,texName)==0) {
-                        if (dts->comp_tex_bind && dts->comp_replace_bind)
-                            error=(dts->comp_replace_bind->bind_blend_mode.intval!=dts->comp_tex_bind->bind_blend_mode.intval);
-                        strcat(texName," ^3");
-                        strcat(texName,dts->replace_name);
-                        if (error)
-                            strcat(texName," ^2MISMATCH!");
-
-                        break;
-                    }
-                }
-                strcpy(path,"Materials/");
-                strcat(path,texName);
-                me=addEntryToMenu(textureMenu,path,editTextureMenuCallback,(void *)(&edit_state.textureSwapTracker->def->def_tex_swaps));
-                if (error)
-                    me->color=0xFF0000FF;
-                error=0;
-            }
-        }
-    }
-    trackerOpenEdit(tracker);
-    for (i=0;i<tracker->count;i++)
-        editCmdAddCompositeTexturesToMenu(textureMenu,&tracker->entries[i]);
-    trackerCloseEdit(tracker);
-    return;
+    editCmdAddTexturesToMenu(textureMenu,tracker,editCmdAddCompositeTexturesForModel);
 }
 
 void editTrickFile(const char *filename, const char *trickname, int is_texture)

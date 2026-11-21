@@ -73,6 +73,8 @@ static void pickColorAbort()
     setcolor = 1;
 }
 
+#define SWATCHSIZE 128
+
 static void onColorPickerOK(char* text) {
     edit_colorPicker_close();
     s_colorPickerState = COLORPICKER_OK;
@@ -270,9 +272,251 @@ int pickColorNew(int * color, int alpha) {
 
 
 //alpha=0 if you don't want an alpha slider, non-zero if you do
+// Lazy-load the color-picker bitmap font. Returns the font id on success,
+// zero on failure (the caller aborts the frame with return 0).
+static int pickColorEnsureFont(void)
+{
+    static int font_id;
+    if (!font_id)
+        font_id = fontLoadImage("colorpicker_edit");
+    return font_id;
+}
+
+// Draw the "X" close mark at (px, py) using the color-picker font.
+// Returns 0 on font-load failure; the caller must propagate the 0 return.
+static int pickColorDrawCloseMark(int px, int py)
+{
+    int font_id = pickColorEnsureFont();
+    if (!font_id)
+        return 0;
+    fontSet(font_id);
+    fontDefaults();
+    fontScale(1.f,1.f);
+    fontText(px,py,"X");
+    fontSet(0);
+    return 1;
+}
+
+// Draw the current-colour and original-colour swatch chips.
+static void pickColorDrawSwatchChips(int px, int py, int imgx, int alpha,
+        int spriteColor, int originalColor)
+{
+    int oldColor;
+    display_sprite(white_tex_atlas,
+                                px+SWATCHSIZE,
+                                py+48+alpha*16,
+                                2,
+                                (double)(imgx-24)/16.0,
+                                29.0/8,
+                                0xff);
+    display_sprite(white_tex_atlas,
+                                px+SWATCHSIZE+imgx/2-12,
+                                py+48+alpha*16,
+                                2,
+                                (double)(imgx-24)/16.0,
+                                29.0/8,
+                                0xffffffff);
+    display_sprite(white_tex_atlas,
+                                px+SWATCHSIZE,
+                                py+48+alpha*16,
+                                3,
+                                (double)(imgx-24)/8.0,
+                                29.0/8,
+                                spriteColor);
+
+    oldColor=originalColor;
+    spriteColor=0;
+    spriteColor|=((oldColor>>24)&0xff)<< 0;
+    spriteColor|=((oldColor>> 8)&0xff)<<16;
+    spriteColor|=((oldColor>>16)&0xff)<<24;
+    spriteColor|=((oldColor>> 0)&0xff)<< 8;
+    display_sprite(white_tex_atlas,
+                                px+SWATCHSIZE*2,
+                                py+48+alpha*16,
+                                2,
+                                (double)(imgx-24)/16.0,
+                                29.0/8,
+                                0xff);
+    display_sprite(white_tex_atlas,
+                                px+SWATCHSIZE*2+imgx/2-12,
+                                py+48+alpha*16,
+                                2,
+                                (double)(imgx-24)/16.0,
+                                29.0/8,
+                                0xffffffff);
+    display_sprite(white_tex_atlas,
+                                px+SWATCHSIZE*2,
+                                py+48+alpha*16,
+                                3,
+                                (double)(imgx-24)/8.0,
+                                29.0/8,
+                                spriteColor);
+}
+
+static void pickColorPackOutput(int *color, U8 *final_color, U8 *hsv,
+        int alpha, int *spriteColor, char *color_msg, char *hsv_msg)
+{
+    if (alpha)
+        sprintf(color_msg,"RGBA: %d %d %d %d",(unsigned int)final_color[0],(unsigned int)final_color[1],(unsigned int)final_color[2],(unsigned int)final_color[3]);
+    else
+        sprintf(color_msg,"RGB: %d %d %d",(unsigned int)final_color[0],(unsigned int)final_color[1],(unsigned int)final_color[2]);
+    *color = ((final_color[0] >> 0) << 16) | ((final_color[1] >> 0) << 8) | (final_color[2] >> 0) | (final_color[3] << 24);
+    *spriteColor = (final_color[0] << 24) | (final_color[1] << 16) | (final_color[2] << 8) | (final_color[3] << 0);
+    sprintf(hsv_msg,"HSV: %d %d %d",(unsigned int)hsv[0],(unsigned int)hsv[1],(unsigned int)hsv[2]);
+}
+
+static int pickColorParseNumberedInput(void)
+{
+    static char namebuf[TEXT_DIALOG_MAX_STRLEN];
+    char    buf[200],*s, *delim = " \t,";
+    int        divisor = 1;
+    if( !winGetString("Enter color numbers",namebuf) )
+        return 0;
+    s = strrchr(namebuf,'\\');
+    if (!s++)
+        s = namebuf;
+    strcpy(buf,s);
+    s = strtok(buf,delim);
+    if (s)
+        curr_color[0] = atoi(s) / divisor;
+    s = strtok(0,delim);
+    if (s)
+        curr_color[1] = atoi(s) / divisor;
+    s = strtok(0,delim);
+    if (s)
+        curr_color[2] = atoi(s) / divisor;
+    return 1;
+}
+
+static void pickColorDrawSlider(U8 *val_ptr, int x, int y, int w, int h,
+        int px, int py, U8 *hsv)
+{
+    Vec3    hsvf,rgb;
+    int        startColor,endColor;
+    startColor=    (curr_color[0]<<24)+
+                (curr_color[1]<<16)+
+                (curr_color[2]<<8)+
+                (0xff);
+    endColor=    (curr_color[0]<<24)+
+                (curr_color[1]<<16)+
+                (curr_color[2]<<8)+
+                (0xff);
+    if (val_ptr==&curr_color[0]) {
+        startColor&=0x00ffffff;
+        endColor  |=0xff000000;
+    }
+    if (val_ptr==&curr_color[1]) {
+        startColor&=0xff00ffff;
+        endColor  |=0x00ff0000;
+    }
+    if (val_ptr==&curr_color[2]) {
+        startColor&=0xffff00ff;
+        endColor  |=0x0000ff00;
+    }
+    if (val_ptr==&curr_color[3]) {
+        startColor&=0xffffff00;
+        endColor  |=0x000000ff;
+    }
+    if (val_ptr>=hsv && val_ptr<=hsv+2) {
+        int dex=val_ptr-hsv;
+        hsvf[0]=((double)hsv[0]/255.0)*360.0;
+        hsvf[1]=(double)hsv[1]/255;
+        hsvf[2]=(double)hsv[2]/255;
+        hsvf[dex]=0;
+        hsvToRgb(hsvf,rgb);
+        startColor=    (((int)(rgb[0]*255))<<24)+
+                    (((int)(rgb[1]*255))<<16)+
+                    (((int)(rgb[2]*255))<<8)+
+                    (0xff);
+        hsvf[dex]=1;
+        if (dex==0)
+            hsvf[dex]=360;
+        hsvToRgb(hsvf,rgb);
+        endColor=    (((int)(rgb[0]*255))<<24)+
+                    (((int)(rgb[1]*255))<<16)+
+                    (((int)(rgb[2]*255))<<8)+
+                    (0xff);
+    }
+    if (val_ptr==hsv) {
+        double increment=(double)w/6.0;
+        int curx=x;
+        int j;
+        hsvf[1]=(double)hsv[1]/255.0;
+        hsvf[2]=(double)hsv[2]/255.0;
+        for (j=0;j<6;j++) {
+            hsvf[0]=60*j;
+            hsvToRgb(hsvf,rgb);
+            startColor=    (((int)(rgb[0]*255))<<24)+
+                        (((int)(rgb[1]*255))<<16)+
+                        (((int)(rgb[2]*255))<<8)+
+                        (0xff);
+            hsvf[0]=60*(j+1);
+            hsvToRgb(hsvf,rgb);
+            endColor=    (((int)(rgb[0]*255))<<24)+
+                        (((int)(rgb[1]*255))<<16)+
+                        (((int)(rgb[2]*255))<<8)+
+                        (0xff);
+            display_sprite_UV_4Color(white_tex_atlas,(px+x+((double)j*increment)),py+y,2,
+                                    (double)w/48,(double)h/8,
+                                    startColor,endColor,endColor,startColor,0,0,1,1);
+        }
+        display_sprite(white_tex_atlas,
+                                    px+x+((*val_ptr)*w)/255-1,
+                                    py+y,
+                                    3,
+                                    .125,
+                                    2,
+                                    0xffffffff);
+        display_sprite(white_tex_atlas,
+                                    px+x+((*val_ptr)*w)/255+1,
+                                    py+y,
+                                    3,
+                                    .125,
+                                    2,
+                                    0xffffffff);
+    } else {
+        display_sprite_UV_4Color(white_tex_atlas,px+x,py+y,2,(double)w/8,(double)h/8,
+                                    startColor,endColor,endColor,startColor, 0,0,1,1);
+        display_sprite(white_tex_atlas,
+                                    px+x+((*val_ptr)*w)/255-1,
+                                    py+y,
+                                    3,
+                                    .125,
+                                    2,
+                                    0xffffffff);
+        display_sprite(white_tex_atlas,
+                                    px+x+((*val_ptr)*w)/255+1,
+                                    py+y,
+                                    3,
+                                    .125,
+                                    2,
+                                    0xffffffff);
+    }
+}
+
+static void pickColorUpdateHsv(U8 *selectedValue,U8 *hsv,Vec3 hsvf,Vec3 rgb)
+{
+    if (selectedValue>=hsv && selectedValue<=hsv+2) {
+        hsvf[0]=((double)hsv[0]/255.0)*360.0;
+        hsvf[1]=(double)hsv[1]/255.0;
+        hsvf[2]=(double)hsv[2]/255.0;
+        hsvToRgb(hsvf,rgb);
+        curr_color[0]=rgb[0]*255;
+        curr_color[1]=rgb[1]*255;
+        curr_color[2]=rgb[2]*255;
+    } else {
+        rgb[0]=(double)curr_color[0]/255.0;
+        rgb[1]=(double)curr_color[1]/255.0;
+        rgb[2]=(double)curr_color[2]/255.0;
+        rgbToHsv(rgb,hsvf);
+        hsv[0]=hsvf[0]*(255.0/360.0);
+        hsv[1]=hsvf[1]*255;
+        hsv[2]=hsvf[2]*255;
+    }
+}
+
 int pickColor(int *color,int alpha)
 {
-    #define SWATCHSIZE 128
     static U8 do_color,cancel,ok,negative;
     static char color_msg[100],bright_msg[20],hsv_msg[100],neg_msg[100];
     static U8 hsv[3];
@@ -286,8 +530,6 @@ int pickColor(int *color,int alpha)
     int    i,x,y,w,h,c,copycolor,exitval=0;
     int    px = 25,py,imgx=128,imgy=128,no_ambient=0;
     int spriteColor;    //color stored in different order for sprite functions
-    int oldColor=*color|(alpha?0x00:0xff000000);
-    static color_font_id;
     static char increment[4]=" + ";
     static char decrement[4]=" - ";
     Vec3    hsvf,rgb;    //for using conversion functions
@@ -358,27 +600,11 @@ int pickColor(int *color,int alpha)
     do_color=cancel=ok = 0;
     if (edit_state.colorbynumber)
     {
-        static char namebuf[TEXT_DIALOG_MAX_STRLEN];
-        char    buf[200],*s, *delim = " \t,";
-        int        divisor = 1;
-        if( !winGetString("Enter color numbers",namebuf) )
+        if (!pickColorParseNumberedInput())
         {
             exitval = -2;
             goto done;
         }
-        s = strrchr(namebuf,'\\');
-        if (!s++)
-            s = namebuf;
-        strcpy(buf,s);
-        s = strtok(buf,delim);
-        if (s)
-            curr_color[0] = atoi(s) / divisor;
-        s = strtok(0,delim);
-        if (s)
-            curr_color[1] = atoi(s) / divisor;
-        s = strtok(0,delim);
-        if (s)
-            curr_color[2] = atoi(s) / divisor;
         ok = 1;
         goto textpicked;
     }
@@ -456,108 +682,8 @@ int pickColor(int *color,int alpha)
                 (*regions[i].val_ptr)=((curx-regions[i].x-px)*255)/(regions[i].w-1);
         }
 
-        if (regions[i].allowsSliding) {
-            int startColor,endColor;
-            startColor=    (curr_color[0]<<24)+
-                        (curr_color[1]<<16)+
-                        (curr_color[2]<<8)+
-                        (0xff);
-            endColor=    (curr_color[0]<<24)+
-                        (curr_color[1]<<16)+
-                        (curr_color[2]<<8)+
-                        (0xff);
-            if (regions[i].val_ptr==&curr_color[0]) {
-                startColor&=0x00ffffff;
-                endColor  |=0xff000000;
-            }
-            if (regions[i].val_ptr==&curr_color[1]) {
-                startColor&=0xff00ffff;
-                endColor  |=0x00ff0000;
-            }
-            if (regions[i].val_ptr==&curr_color[2]) {
-                startColor&=0xffff00ff;
-                endColor  |=0x0000ff00;
-            }
-            if (regions[i].val_ptr==&curr_color[3]) {
-                startColor&=0xffffff00;
-                endColor  |=0x000000ff;
-            }
-            if (regions[i].val_ptr>=hsv && regions[i].val_ptr<=hsv+2) {
-                int dex=regions[i].val_ptr-hsv;
-                hsvf[0]=((double)hsv[0]/255.0)*360.0;
-                hsvf[1]=(double)hsv[1]/255;
-                hsvf[2]=(double)hsv[2]/255;
-                hsvf[dex]=0;
-                hsvToRgb(hsvf,rgb);
-                startColor=    (((int)(rgb[0]*255))<<24)+
-                            (((int)(rgb[1]*255))<<16)+
-                            (((int)(rgb[2]*255))<<8)+
-                            (0xff);
-                hsvf[dex]=1;
-                if (dex==0)
-                    hsvf[dex]=360;
-                hsvToRgb(hsvf,rgb);
-                endColor=    (((int)(rgb[0]*255))<<24)+
-                            (((int)(rgb[1]*255))<<16)+
-                            (((int)(rgb[2]*255))<<8)+
-                            (0xff);
-            }
-            if (regions[i].val_ptr==hsv) {
-                double increment=(double)regions[i].w/6.0;
-                int curx=regions[i].x;
-                int j;
-                hsvf[1]=(double)hsv[1]/255.0;
-                hsvf[2]=(double)hsv[2]/255.0;
-                for (j=0;j<6;j++) {
-                    hsvf[0]=60*j;
-                    hsvToRgb(hsvf,rgb);
-                    startColor=    (((int)(rgb[0]*255))<<24)+
-                                (((int)(rgb[1]*255))<<16)+
-                                (((int)(rgb[2]*255))<<8)+
-                                (0xff);
-                    hsvf[0]=60*(j+1);
-                    hsvToRgb(hsvf,rgb);
-                    endColor=    (((int)(rgb[0]*255))<<24)+
-                                (((int)(rgb[1]*255))<<16)+
-                                (((int)(rgb[2]*255))<<8)+
-                                (0xff);
-                    display_sprite_UV_4Color(white_tex_atlas,(px+regions[i].x+((double)j*increment)),py+regions[i].y,2,
-                                            (double)regions[i].w/48,(double)regions[i].h/8,
-                                            startColor,endColor,endColor,startColor,0,0,1,1);
-                }
-                display_sprite(white_tex_atlas,
-                                            px+regions[i].x+((*regions[i].val_ptr)*regions[i].w)/255-1,
-                                            py+regions[i].y,
-                                            3,
-                                            .125,
-                                            2,
-                                            0xffffffff);
-                display_sprite(white_tex_atlas,
-                                            px+regions[i].x+((*regions[i].val_ptr)*regions[i].w)/255+1,
-                                            py+regions[i].y,
-                                            3,
-                                            .125,
-                                            2,
-                                            0xffffffff);
-            } else {
-                display_sprite_UV_4Color(white_tex_atlas,px+regions[i].x,py+regions[i].y,2,(double)regions[i].w/8,(double)regions[i].h/8,
-                                            startColor,endColor,endColor,startColor, 0,0,1,1);
-                display_sprite(white_tex_atlas,
-                                            px+regions[i].x+((*regions[i].val_ptr)*regions[i].w)/255-1,
-                                            py+regions[i].y,
-                                            3,
-                                            .125,
-                                            2,
-                                            0xffffffff);
-                display_sprite(white_tex_atlas,
-                                            px+regions[i].x+((*regions[i].val_ptr)*regions[i].w)/255+1,
-                                            py+regions[i].y,
-                                            3,
-                                            .125,
-                                            2,
-                                            0xffffffff);
-            }
-        }
+        if (regions[i].allowsSliding)
+            pickColorDrawSlider(regions[i].val_ptr, regions[i].x, regions[i].y, regions[i].w, regions[i].h, px, py, hsv);
 
         pickFromFrameBuffer();
 
@@ -580,23 +706,7 @@ int pickColor(int *color,int alpha)
             fontText(px+regions[i].x,py+regions[i].y+offset,regions[i].message);
         }    
     }
-    if (regions[regionSelected].val_ptr>=hsv && regions[regionSelected].val_ptr<=hsv+2) {
-        hsvf[0]=((double)hsv[0]/255.0)*360.0;
-        hsvf[1]=(double)hsv[1]/255.0;
-        hsvf[2]=(double)hsv[2]/255.0;
-        hsvToRgb(hsvf,rgb);
-        curr_color[0]=rgb[0]*255;
-        curr_color[1]=rgb[1]*255;
-        curr_color[2]=rgb[2]*255;
-    } else {
-        rgb[0]=(double)curr_color[0]/255.0;
-        rgb[1]=(double)curr_color[1]/255.0;
-        rgb[2]=(double)curr_color[2]/255.0;
-        rgbToHsv(rgb,hsvf);
-        hsv[0]=hsvf[0]*(255.0/360.0);
-        hsv[1]=hsvf[1]*255;
-        hsv[2]=hsvf[2]*255;
-    }
+    pickColorUpdateHsv(regions[regionSelected].val_ptr,hsv,hsvf,rgb);
     edit_state.sel = 0;
 
 textpicked:
@@ -607,26 +717,10 @@ textpicked:
         curr_color[3]&=~1;
     for(i=0;i<4;i++)
         final_color[i] = curr_color[i];
-    if (!color_font_id)
-        color_font_id = fontLoadImage("colorpicker_edit");
-    if (!color_font_id)
+    if (!pickColorDrawCloseMark(px, py))
         return 0;
-    fontSet(color_font_id);
-    fontDefaults();
-    fontScale(1.f,1.f);
-    fontText(px,py,"X");
-    fontSet(0);
 
-    if (alpha) {
-        sprintf(color_msg,"RGBA: %d %d %d %d",(unsigned int)final_color[0],(unsigned int)final_color[1],(unsigned int)final_color[2],(unsigned int)final_color[3]);
-        *color = ((final_color[0] >> 0) << 16) | ((final_color[1] >> 0) << 8) | (final_color[2] >> 0) | (final_color[3] << 24);
-        spriteColor=(final_color[0] << 24) | (final_color[1] << 16) | (final_color[2] << 8) | (final_color[3] << 0);
-    } else {
-        sprintf(color_msg,"RGB: %d %d %d",(unsigned int)final_color[0],(unsigned int)final_color[1],(unsigned int)final_color[2]);
-        *color = ((final_color[0] >> 0) << 16) | ((final_color[1] >> 0) << 8) | (final_color[2] >> 0) | (final_color[3] << 24);
-        spriteColor=(final_color[0] << 24) | (final_color[1] << 16) | (final_color[2] << 8) | (final_color[3] << 0);
-    }
-    sprintf(hsv_msg,"HSV: %d %d %d",(unsigned int)hsv[0],(unsigned int)hsv[1],(unsigned int)hsv[2]);
+    pickColorPackOutput(color, final_color, hsv, alpha, &spriteColor, color_msg, hsv_msg);
     if (!originalColorSet) {
         originalColorSet=1;
         originalColor=*color;
@@ -642,55 +736,7 @@ textpicked:
     fontText(px+SWATCHSIZE,py+48+alpha*16,"\001");
     fontDefaults();
 */
-    display_sprite(white_tex_atlas,
-                                px+SWATCHSIZE,
-                                py+48+alpha*16,
-                                2,
-                                (double)(imgx-24)/16.0,
-                                29.0/8,
-                                0xff);
-    display_sprite(white_tex_atlas,
-                                px+SWATCHSIZE+imgx/2-12,
-                                py+48+alpha*16,
-                                2,
-                                (double)(imgx-24)/16.0,
-                                29.0/8,
-                                0xffffffff);
-    display_sprite(white_tex_atlas,
-                                px+SWATCHSIZE,
-                                py+48+alpha*16,
-                                3,
-                                (double)(imgx-24)/8.0,
-                                29.0/8,
-                                spriteColor);
-
-    spriteColor=0;
-    oldColor=originalColor;
-    spriteColor|=((oldColor>>24)&0xff)<< 0;
-    spriteColor|=((oldColor>> 8)&0xff)<<16;
-    spriteColor|=((oldColor>>16)&0xff)<<24;
-    spriteColor|=((oldColor>> 0)&0xff)<< 8;
-    display_sprite(white_tex_atlas,
-                                px+SWATCHSIZE*2,
-                                py+48+alpha*16,
-                                2,
-                                (double)(imgx-24)/16.0,
-                                29.0/8,
-                                0xff);
-    display_sprite(white_tex_atlas,
-                                px+SWATCHSIZE*2+imgx/2-12,
-                                py+48+alpha*16,
-                                2,
-                                (double)(imgx-24)/16.0,
-                                29.0/8,
-                                0xffffffff);
-    display_sprite(white_tex_atlas,
-                                px+SWATCHSIZE*2,
-                                py+48+alpha*16,
-                                3,
-                                (double)(imgx-24)/8.0,
-                                29.0/8,
-                                spriteColor);
+    pickColorDrawSwatchChips(px, py, imgx, alpha, spriteColor, originalColor);
 
 
     if (cancel || edit_state.unsel) {
@@ -724,6 +770,43 @@ done:
         return exitval;
 }
 
+
+static void get2ColorApplyColor(DefTracker *tracker,int idx,int rgb,DefTracker *lightRef,int set_val,int is_tint,int done)
+{
+    GroupDef *def;
+
+    def = tracker->def;
+    def->color[idx][0] = (rgb >> 16)    & 255;
+    def->color[idx][1] = (rgb >> 8)    & 255;
+    def->color[idx][2] = (rgb >> 0)    & 255;
+    def->color[idx][3] = (rgb >> 24)    & 255;
+    if (lightRef->tricks)
+    {
+        lightRef->tricks->trick_rgba[0]=def->color[0][0];
+        lightRef->tricks->trick_rgba[1]=def->color[0][1];
+        lightRef->tricks->trick_rgba[2]=def->color[0][2];
+        lightRef->tricks->trick_rgba[3]=def->color[0][3];
+        lightRef->tricks->trick_rgba2[0]=def->color[1][0];
+        lightRef->tricks->trick_rgba2[1]=def->color[1][1];
+        lightRef->tricks->trick_rgba2[2]=def->color[1][2];
+        lightRef->tricks->trick_rgba2[3]=def->color[1][3];
+    }
+    if (!set_val)
+        memset(def->color,0,sizeof(def->color));
+
+    if (is_tint)
+        def->has_tint_color = set_val;
+    else
+    {
+        def->has_fog = set_val;
+        if (edit_state.fogcolor1)
+            memcpy(def->color[1],def->color[0],sizeof(def->color[0]));
+    }
+    if (done) {
+        editUpdateTracker(tracker);
+        unSelect(2);
+    }
+}
 
 // returns:
 // 0 if still deciding color
@@ -790,39 +873,7 @@ int get2Color(int idx,int is_tint,int *memp)
 
     lightRef = edit_state.lightHandle ? groupRefFind(edit_state.lightHandle->ref_id) : NULL;
     for (i=0;i<sel_count;i++)
-    {
-        def = sel_list[i].def_tracker->def;
-        def->color[idx][0] = (rgb >> 16)    & 255;
-        def->color[idx][1] = (rgb >> 8)    & 255;
-        def->color[idx][2] = (rgb >> 0)    & 255;
-        def->color[idx][3] = (rgb >> 24)    & 255;
-        if (lightRef->tricks)
-        {
-            lightRef->tricks->trick_rgba[0]=def->color[0][0];
-            lightRef->tricks->trick_rgba[1]=def->color[0][1];
-            lightRef->tricks->trick_rgba[2]=def->color[0][2];
-            lightRef->tricks->trick_rgba[3]=def->color[0][3];
-            lightRef->tricks->trick_rgba2[0]=def->color[1][0];
-            lightRef->tricks->trick_rgba2[1]=def->color[1][1];
-            lightRef->tricks->trick_rgba2[2]=def->color[1][2];
-            lightRef->tricks->trick_rgba2[3]=def->color[1][3];
-        }
-        if (!set_val)
-            memset(def->color,0,sizeof(def->color));
-
-        if (is_tint)
-            def->has_tint_color = set_val;
-        else
-        {
-            def->has_fog = set_val;
-            if (edit_state.fogcolor1)
-                memcpy(def->color[1],def->color[0],sizeof(def->color[0]));
-        }
-        if (done) {
-            editUpdateTracker(sel_list[i].def_tracker);
-            unSelect(2);
-        }
-    }
+        get2ColorApplyColor(sel_list[i].def_tracker,idx,rgb,lightRef,set_val,is_tint,done);
     {
         if (done)
         {

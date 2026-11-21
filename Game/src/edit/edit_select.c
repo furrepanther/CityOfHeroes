@@ -68,10 +68,10 @@ int editCollNodeCallback(void *nd,int facing)
         // MS: Prevent clicking on a door's invisible world-geometry collision.
         //     They don't have names, and show up as "(null)/(null)" when selected in the editor.
         //     This is annoying and confusing and no one could possibly ever want to select them.
-        
+
         if(!tracker->def->name)
             return 0;
-        
+
         if (tracker->def->model)
             model = tracker->def->model;
 #if 1
@@ -112,19 +112,15 @@ void setScale()
     sel.scalenode->mat[3][1] = (sel.max[1] - sel.min[1])/2 * (sel.scale[1] - 1.f);
 }
 
-
-void selCopy(const Vec3 pos)
+static int selCopyPrepare(void)
 {
-int            i,ref_id,count;
-DefTracker    *ref,*selref;
-Mat4        mat,inv_mat,tracker_mat;
-DefTracker    *tracker;
+    int i;
 
     if (sel.fake_ref.def && sel_count > 1)
     {
         winMsgAlert("You can only do this with one item selected!");
         sel.fake_ref.def = 0;
-        return;
+        return 0;
     }
     if (sel.parent)
     {
@@ -141,12 +137,14 @@ DefTracker    *tracker;
         //sel.fake_ref.def_tracker = 0;
     }
     if (!sel_count && !sel.fake_ref.def)
-        return;
+        return 0;
+    return 1;
+}
 
-    sel.parent = gfxTreeInsert(0);
-    sel.offsetnode = gfxTreeInsert(sel.parent);
-    sel.scalenode = gfxTreeInsert(sel.offsetnode);
-    copyMat4(unitmat,sel.scalenode->mat);
+static DefTracker *selCopyFindReference(const Vec3 pos,DefTracker **tracker,Mat4 tracker_mat)
+{
+    DefTracker *ref;
+
     if (!sel_count)
     {
     Vec3    dv;
@@ -164,15 +162,22 @@ DefTracker    *tracker;
             copyVec3(cam_info.cammat[3],ref->mat[3]);
             moveVinZ(ref->mat[3],cam_info.cammat,-size);
         }
-        tracker = ref;//trackerFind(ref,0,0);
-        trackerGetMat(tracker,ref,tracker_mat);
+        *tracker = ref;//trackerFind(ref,0,0);
+        trackerGetMat(*tracker,ref,tracker_mat);
     }
     else
     {
         ref = groupRefFind(sel_list[0].id);
-        tracker = sel_list[0].def_tracker;
-        trackerGetMat(tracker,ref,tracker_mat);
+        *tracker = sel_list[0].def_tracker;
+        trackerGetMat(*tracker,ref,tracker_mat);
     }
+    return ref;
+}
+
+static void selCopyPrepareTransform(DefTracker *tracker,Mat4 tracker_mat,Mat4 mat)
+{
+    int i;
+
     zeroVec3(sel.offsetnode->mat[3]);
     copyMat3(unitmat,sel.parent->mat);
     copyMat3(tracker_mat,sel.offsetnode->mat);
@@ -195,12 +200,13 @@ DefTracker    *tracker;
         sel.scale_inv[i] = 1.f / sel.scale[i];
 
     mulMat4(sel.parent->mat,sel.offsetnode->mat,mat);
-    invertMat4Copy(mat,inv_mat);
-    //setVec3(sel.min,8e16,8e16,8e16);
-    if (sel.fake_ref.def)
-        count = 1;
-    else
-        count = sel_count;
+}
+
+static void selCopyBuildReferences(Mat4 inv_mat,int count,DefTracker *ref,DefTracker *tracker,Mat4 tracker_mat)
+{
+    int i,ref_id;
+    DefTracker *selref;
+
     for(i=0;i<count;i++)
     {
         if (sel_count)
@@ -234,6 +240,32 @@ DefTracker    *tracker;
             copyMat3(sel_list[i].def_tracker->mat, sel.fake_ref.mat);
         }
     }
+}
+
+
+void selCopy(const Vec3 pos)
+{
+int            count;
+DefTracker    *ref;
+Mat4        mat,inv_mat,tracker_mat;
+DefTracker    *tracker;
+
+    if (!selCopyPrepare())
+        return;
+
+    sel.parent = gfxTreeInsert(0);
+    sel.offsetnode = gfxTreeInsert(sel.parent);
+    sel.scalenode = gfxTreeInsert(sel.offsetnode);
+    copyMat4(unitmat,sel.scalenode->mat);
+    ref = selCopyFindReference(pos,&tracker,tracker_mat);
+    selCopyPrepareTransform(tracker,tracker_mat,mat);
+    invertMat4Copy(mat,inv_mat);
+    //setVec3(sel.min,8e16,8e16,8e16);
+    if (sel.fake_ref.def)
+        count = 1;
+    else
+        count = sel_count;
+    selCopyBuildReferences(inv_mat,count,ref,tracker,tracker_mat);
     sel_ref_count = count;
 }
 
@@ -267,162 +299,74 @@ void edit_relock()
 
 //BIG TO DO: lots of commented out code in this function.  if things have been working properly
 //in here for a few weeks, get rid of it all
-int selUpdate(Vec3 start,Vec3 end,int lost_focus)
+static void selUpdateRadii(int lost_focus)
 {
-    extern int mouse_dx,mouse_dy;
-    F32        x=0,z=0,y=0;
-    Vec3    dv;
-    Mat4    mat;                        //stores the axes and origin of the coordinate system
-                                        //that the object is being modified in (translated, rotated...)
+    F32            scaleval,size;
+    int            i;
+    GroupDef    *def;
+    U32            color;
+    extern float propRadius;
+    extern int mouse_dy;
 
-    int        edit_axis[3] = {0,0,0},i;    //this variable is supposed to determine which axes the object
-                                        //can be modified along, it does not work correctly with the rest
-                                        //of the code, and i think its only purpose now is to tell
-                                        //showGrid which lines to draw
-    F32        rotval;
-    static    int last_plane;
-    static int        old_edit_axis[3];
-    Vec3        oldPosition;            //position of the object *now*, which will be old by the
-                                        //end of the function
-    static Vec3    localPyr;                //store the snapped_pyr for local rotations
-    static int    localRotation=0;        //when we first start to localrot, we need to store the matrix
-                                        //this will flag when we first enter localrot
-    static Mat4    localRotationMatrix;    //and this is the matrix
+    if (!(edit_state.lightsize || edit_state.soundsize || edit_state.fogsize || edit_state.beaconSize || edit_state.editPropRadius))
+        return;
 
-    if(edit_state.localrot && isDown(MS_LEFT))
+    //extractScale(sel.parent->mat,sel.scale);
+    scaleval = -mouse_dy * 0.1f;
+
+    for(i=0;i<sel_count;i++)
     {
-        if(    (localRotation==0 || localRotation!=edit_state.plane+1) &&
-            sel.offsetnode != NULL)
+        def = sel_list[i].def_tracker->def;
+        if (edit_state.lightsize && !def->has_light)
+            continue;
+        if (edit_state.soundsize && !def->has_sound)
+            continue;
+        if (edit_state.fogsize && !def->has_fog)
+            continue;
+        if (edit_state.beaconSize && !def->has_beacon)
+            continue;
+
+        if (edit_state.beaconSize)
+            size = def->beacon_radius;
+        else if (edit_state.fogsize)
+            size = def->fog_radius;
+        else if (edit_state.lightsize)
+            size = def->light_radius;
+        else if (edit_state.soundsize)
+            size = def->sound_radius;
+        else if (edit_state.editPropRadius)
+            size = propRadius;
+
+        if (!(lost_focus || !inpLevel(INP_LBUTTON) || inpIsMouseLocked()))
         {
-            localRotation=edit_state.plane+1;
-            copyMat4(sel.offsetnode->mat,localRotationMatrix);
-            zeroVec3(localPyr);
-        }
-    }
-    else
-    {
-        localRotation=0;
-    }
-
-    if (sel.parent)
-        copyVec3(sel.parent->mat[3],oldPosition);
-
-    if (edit_state.lightsize || edit_state.soundsize || edit_state.fogsize || edit_state.beaconSize || edit_state.editPropRadius)
-    {
-        F32            scaleval,size;
-        int            i;
-        GroupDef    *def;
-        U32            color;
-        extern float propRadius;
-
-        //extractScale(sel.parent->mat,sel.scale);
-        scaleval = -mouse_dy * 0.1f;
-
-        for(i=0;i<sel_count;i++)
-        {
-            def = sel_list[i].def_tracker->def;
-            if (edit_state.lightsize && !def->has_light)
-                continue;
-            if (edit_state.soundsize && !def->has_sound)
-                continue;
-            if (edit_state.fogsize && !def->has_fog)
-                continue;
-            if (edit_state.beaconSize && !def->has_beacon)
-                continue;
+            scaleval = size * 0.01f;
+            if (scaleval < 0.01)
+                scaleval = 0.01;
+            size -= mouse_dy * scaleval;
+            if (size < 0)
+                size = 0;
 
             if (edit_state.beaconSize)
-                size = def->beacon_radius;
+                def->beacon_radius = size;
             else if (edit_state.fogsize)
-                size = def->fog_radius;
+                def->fog_radius = size;
             else if (edit_state.lightsize)
-                size = def->light_radius;
+                def->light_radius = size;
             else if (edit_state.soundsize)
-                size = def->sound_radius;
-            else if (edit_state.editPropRadius)
-                size = propRadius;
-
-            if (!(lost_focus || !inpLevel(INP_LBUTTON) || inpIsMouseLocked()))
-            {
-                scaleval = size * 0.01f;
-                if (scaleval < 0.01)
-                    scaleval = 0.01;
-                size -= mouse_dy * scaleval;
-                if (size < 0)
-                    size = 0;
-
-                if (edit_state.beaconSize)
-                    def->beacon_radius = size;
-                else if (edit_state.fogsize)
-                    def->fog_radius = size;
-                else if (edit_state.lightsize)
-                    def->light_radius = size;
-                else if (edit_state.soundsize)
-                    def->sound_radius = size;
-                else if(edit_state.editPropRadius)
-                    propRadius = size;
-            }
-            xyprintf(1,windowScaleY(45),"Radius %f",size);
-            color = 0xffff00;
-            if (sel_count == 1 && sel_list[0].def_tracker->def->sound_exclude)
-                color = 0xff0000;
-            drawSphere(sel_list[i].def_tracker->mat,size,20,color);
+                def->sound_radius = size;
+            else if(edit_state.editPropRadius)
+                propRadius = size;
         }
+        xyprintf(1,windowScaleY(45),"Radius %f",size);
+        color = 0xffff00;
+        if (sel_count == 1 && sel_list[0].def_tracker->def->sound_exclude)
+            color = 0xff0000;
+        drawSphere(sel_list[i].def_tracker->mat,size,20,color);
     }
+}
 
-    //i don't think anyone uses zerogrid.  i think if we get rid of it we can also get
-    //rid of showGrid2.  honestly, why do we need a showGrid2?
-    if (edit_state.zerogrid)
-    {
-    int        draw_axis[3] = {1,0,1},zero_axis[3] = {0,0,0};
-
-        showGrid2(unitmat,draw_axis,zero_axis);
-    }
-
-    //!sel.parent means that nothing is selected
-    if (!sel.parent || (edit_state.tintcolor1 || edit_state.tintcolor2))
-    {
-        g_needRelock = 1;
-        return 0;
-    }
-
-retry:
-    setScale();
-    copyMat4(unitmat,mat);
-
-    if (edit_state.posrot)
-    {
-//        if (sel.fake_ref.def!=NULL) {
-//            if (edit_state.localrot)
-//                mulMat4(sel.fake_ref.mat,sel.offsetnode->mat,mat);
-//            else
-//                copyMat3(sel.fake_ref.mat,mat);
-//        } else {
-            if (edit_state.localrot)
-                mulMat4(sel.parent->mat,sel.offsetnode->mat,mat);
-            else
-                copyMat3(sel.parent->mat,mat);
-//        }
-//        if (edit_state.useObjectAxes)
-//            copyMat3(edit_state.objectMatrix,mat);
-        if (edit_state.localrot) {
-            drawRotationGuide(mat[3],mat,edit_state.plane);
-        } else {
-            Mat4 buf,buf2;
-            mulMat4(sel.parent->mat,sel.offsetnode->mat,buf);
-            mulMat4(buf,sel.scalenode->mat,buf2);
-            if (edit_state.useObjectAxes)
-                drawRotationGuide(buf2[3],edit_state.objectMatrix,edit_state.plane);
-            else if (edit_state.snaptype == SNAP_VERT)
-            {
-                drawRotationGuide(sel.parent->mat[3],unitmat,edit_state.plane);
-            }
-            else
-                drawRotationGuide(buf2[3],unitmat,edit_state.plane);
-        }
-    }
-
-    copyVec3(sel.parent->mat[3],mat[3]);
-
+static void selUpdateSetAxes(Mat4 mat,int edit_axis[3])
+{
     switch(edit_state.plane)            //this code changes the axes so that we are translating
     {                                    //and rotating along the proper axes.  Each does two swaps
         Vec3 buf;                        //so that the determinate of the matrix remains 1, and not -1
@@ -472,53 +416,431 @@ retry:
                     edit_axis[2] = 1;
         }
     }
-    if (edit_state.quickPlacement || lost_focus || !inpLevel(INP_LBUTTON) || inpIsMouseLocked())
+}
+
+static void selUpdateDrawRotationGuide(Mat4 mat)
+{
+    if (edit_state.posrot)
     {
-        if (edit_state.useObjectAxes && !edit_state.posrot) {
-            Mat4 buf;
-            mulMat3(edit_state.objectMatrix,mat,buf);
-            copyMat3(buf,mat);
-            showGrid(mat,edit_axis,old_edit_axis,0);
-        } else
-        if(edit_state.quickPlacement){
-            edit_axis[0] = 1;
-            edit_axis[1] = 0;
-            edit_axis[2] = 1;
-            copyMat3(unitmat, mat);
-            copyVec3(sel.parent->mat[3], mat[3]);
-            showGrid(mat,edit_axis,old_edit_axis,0);
+//        if (sel.fake_ref.def!=NULL) {
+//            if (edit_state.localrot)
+//                mulMat4(sel.fake_ref.mat,sel.offsetnode->mat,mat);
+//            else
+//                copyMat3(sel.fake_ref.mat,mat);
+//        } else {
+            if (edit_state.localrot)
+                mulMat4(sel.parent->mat,sel.offsetnode->mat,mat);
+            else
+                copyMat3(sel.parent->mat,mat);
+//        }
+//        if (edit_state.useObjectAxes)
+//            copyMat3(edit_state.objectMatrix,mat);
+        if (edit_state.localrot) {
+            drawRotationGuide(mat[3],mat,edit_state.plane);
         } else {
-            if (!edit_state.posrot) {
-                if (edit_state.singleaxis && edit_state.plane==0)
-                {
-                    Vec3 buf;
-                    Mat4 mbuf;
-                    edit_axis[0]=1;
-                    edit_axis[1]=0;
-                    copyMat4(mat,mbuf);
-                    copyVec3(mat[0],buf);
-                    copyVec3(mat[2],mat[0]);
-                    copyVec3(buf,mat[2]);
-                    copyVec3(mat[1],buf);
-                    copyVec3(mat[2],mat[1]);
-                    copyVec3(buf,mat[2]);
-                    edit_state.plane=2;
-                    showGrid(mat,edit_axis,old_edit_axis,edit_state.posrot);
-                    copyMat4(mbuf,mat);
-                    edit_axis[0]=0;
-                    edit_axis[1]=1;
-                    edit_state.plane=0;
-                } else 
-                    showGrid(mat,edit_axis,old_edit_axis,edit_state.posrot);
+            Mat4 buf,buf2;
+            mulMat4(sel.parent->mat,sel.offsetnode->mat,buf);
+            mulMat4(buf,sel.scalenode->mat,buf2);
+            if (edit_state.useObjectAxes)
+                drawRotationGuide(buf2[3],edit_state.objectMatrix,edit_state.plane);
+            else if (edit_state.snaptype == SNAP_VERT)
+            {
+                drawRotationGuide(sel.parent->mat[3],unitmat,edit_state.plane);
+            }
+            else
+                drawRotationGuide(buf2[3],unitmat,edit_state.plane);
+        }
+    }
+}
+
+static void selUpdateLocalRotation(int *localRotation,Mat4 localRotationMatrix,Vec3 localPyr)
+{
+    if(edit_state.localrot && isDown(MS_LEFT))
+    {
+        if(    (*localRotation==0 || *localRotation!=edit_state.plane+1) &&
+            sel.offsetnode != NULL)
+        {
+            *localRotation=edit_state.plane+1;
+            copyMat4(sel.offsetnode->mat,localRotationMatrix);
+            zeroVec3(localPyr);
+        }
+    }
+    else
+    {
+        *localRotation=0;
+    }
+}
+
+static int selUpdateMove(Vec3 start,Vec3 end,Mat4 mat,Vec3 dv)
+{
+    if (!planeIntersect(start,end,mat,dv))
+        return 0;
+    {    //handle which axes the object can be moved along
+        int i;
+        Vec3 move;
+        Vec3 buf,buf2;
+        subVec3(dv,sel.parent->mat[3],move);
+        setVec3(dv,0,0,0);
+        for (i=0;i<3;i++){//(edit_state.singleaxis?1:2);i++) {
+            double d=dotVec3(move,mat[i]);
+            if (edit_state.singleaxis && !i)
+                d=0;
+            scaleVec3(mat[i],d,buf);
+            addVec3(buf,dv,buf2);
+            copyVec3(buf2,dv);
+        }
+        copyVec3(dv,buf);
+        addVec3(sel.parent->mat[3],buf,dv);
+        if (!edit_state.nosnap) {
+            if(edit_state.snaptype != SNAP_VERT)
+            {
+                Vec3 snapped;
+                double gridsize;
+                if (edit_state.gridsize==0)
+                    gridsize=.5;
+                else
+                    gridsize=(double)(1<<(edit_state.gridsize-1));
+                if (edit_state.useObjectAxes) {
+                    Vec3 buffer;
+                    subVec3(dv,edit_state.objectMatrix[3],buffer);
+                    mulVecMat3(buffer,edit_state.objectMatrixInverse,snapped);
+                } else
+                    copyVec3(dv,snapped);
+                for (i=0;i<3;i++)
+                    if ((i+1)%3==edit_state.plane || (!edit_state.singleaxis && i==edit_state.plane))
+                        snapped[i]=((int)((snapped[i])/gridsize))*gridsize;
+                if (edit_state.useObjectAxes) {
+                    Vec3 buffer;
+                    mulVecMat3(snapped,edit_state.objectMatrix,buffer);
+                    addVec3(buffer,edit_state.objectMatrix[3],dv);
+                } else
+                    copyVec3(snapped,dv);
+            }
+            else
+            {
+                copyVec3(sel.pick_point,dv);
             }
         }
+    }
+    return 1;
+}
 
-        if(lost_focus || !inpLevel(INP_LBUTTON) || inpIsMouseLocked()){
-            if (edit_state.nudgeLeft || edit_state.nudgeRight || edit_state.nudgeUp || edit_state.nudgeDown)
-                goto nudger;
-            g_needRelock = 1;
-            return 0;
+static int selUpdateQuickOrient(F32 rotval)
+{
+    if (edit_state.quickPlacement && edit_state.quickRotate && edit_state.quickOrient){
+        static F32 yaw_acc;
+        static F32 cur_yaw;
+
+        F32 yaw;
+        Vec3 rot_pyr = {0,0,0};
+        Mat3 rot_mat;
+        F32 lock_angle;
+        Mat4 mat_orig;
+
+        yaw_acc += rotval;
+        lock_angle = lock_angs[edit_state.rotsize];
+
+        yaw = (int)(DEG(yaw_acc) / lock_angle) * lock_angle;
+
+        yaw = RAD(yaw);
+
+        getVec3YP(quickPlacementRotateNormal, &rot_pyr[1], &rot_pyr[0]);
+
+        //printf("normal: %f\t%f\t%f\n", vecParamsXYZ(quickPlacementRotateNormal));
+        //printf("pyr:    %f\t%f\t%f\n", vecParamsXYZ(rot_pyr));
+
+        // I have no idea why this works, the multiply order is totally backwards.
+
+        copyMat3(unitmat, rot_mat);
+        scaleVec3(rot_pyr, -1, rot_pyr);
+        createMat3PYR(rot_mat, rot_pyr);
+        copyMat4(sel.parent->mat, mat_orig);
+        mulMat3(rot_mat, mat_orig, sel.parent->mat);
+
+        copyMat3(unitmat, rot_mat);
+        rollMat3(yaw - cur_yaw, rot_mat);
+        copyMat4(sel.parent->mat, mat_orig);
+        mulMat3(rot_mat, mat_orig, sel.parent->mat);
+
+        copyMat3(unitmat, rot_mat);
+        scaleVec3(rot_pyr, -1, rot_pyr);
+        createMat3YPR(rot_mat, rot_pyr);
+        copyMat4(sel.parent->mat, mat_orig);
+        mulMat3(rot_mat, mat_orig, sel.parent->mat);
+
+        cur_yaw = yaw;
+        return 1;
+    }
+    return 0;
+}
+
+static void selUpdateRotationFallback(F32 rotval,Mat4 localRotationMatrix,Vec3 localPyr)
+{
+    int i;
+
+    switch(edit_state.quickPlacement ? 0 : edit_state.plane)
+    {
+        case 0:
+            sel.pyr[1] += rotval;
+        xcase 1:
+            sel.pyr[2] += rotval;
+        xcase 2:
+            sel.pyr[0] += rotval;
+    }
+    copyVec3(sel.pyr,snapped_pyr);
+    if (edit_state.localrot)
+        rotval=0;
+    {
+        F32 lock_angle;
+
+        lock_angle = lock_angs[edit_state.rotsize];
+        for(i=0;i<3;i++)
+        {
+            int        t;
+
+// this line probably needs to be here in some fashion or another
+//            if (!edit_state.quickPlacement || edit_state.quickPlacement && i != 1)
+//                continue;
+            t = DEG(sel.pyr[i]) / lock_angle;
+            snapped_pyr[i] = RAD(lock_angle * t);
         }
+
+    }
+    if (edit_state.localrot)
+    {
+        Mat4    mat,matx;
+        Vec3 buf;
+        addVec3(sel.pyr,localPyr,buf);
+        copyVec3(buf,localPyr);
+        zeroVec3(sel.pyr);
+        if (!edit_state.nosnap)    {
+            F32 lock_angle;
+            lock_angle = lock_angs[edit_state.rotsize];
+            for(i=0;i<3;i++)
+            {
+                int        t;
+                t = DEG(localPyr[i]) / lock_angle;
+                buf[i] = RAD(lock_angle * t);
+            }
+        }
+        createMat3YPR(mat,buf);
+        mulMat3(localRotationMatrix,mat,matx);
+        copyMat3(matx,sel.offsetnode->mat);
+    } else if (edit_state.useObjectAxes)
+    {
+        Mat4    currentMatrix;
+        Mat4    currentPyrMatrix;
+        Mat4    revisedMatrix;
+        mulMat3(sel.parent->mat,edit_state.objectMatrix,currentMatrix);
+        copyMat3(edit_state.objectMatrix,currentMatrix);
+        createMat3YPR(currentPyrMatrix,snapped_pyr);
+        mulMat3(currentMatrix,currentPyrMatrix,revisedMatrix);
+        mulMat3(revisedMatrix,edit_state.objectMatrixInverse,sel.parent->mat);
+    }
+    else {
+        createMat3YPR(sel.parent->mat,snapped_pyr);
+    }
+}
+
+static void selUpdateShowGrid(Mat4 mat,int edit_axis[3],int old_edit_axis[3])
+{
+    if (edit_state.singleaxis && edit_state.plane==0)
+    {
+        Vec3 buf;
+        Mat4 mbuf;
+        edit_axis[0]=1;
+        edit_axis[1]=0;
+        copyMat4(mat,mbuf);
+        copyVec3(mat[0],buf);
+        copyVec3(mat[2],mat[0]);
+        copyVec3(buf,mat[2]);
+        copyVec3(mat[1],buf);
+        copyVec3(mat[2],mat[1]);
+        copyVec3(buf,mat[2]);
+        edit_state.plane=2;
+        showGrid(mat,edit_axis,old_edit_axis,edit_state.posrot);
+        copyMat4(mbuf,mat);
+        edit_axis[0]=0;
+        edit_axis[1]=1;
+        edit_state.plane=0;
+    } else
+        showGrid(mat,edit_axis,old_edit_axis,edit_state.posrot);
+}
+
+static void selUpdateGridMode(Mat4 mat,int edit_axis[3],int old_edit_axis[3])
+{
+    if (edit_state.useObjectAxes && !edit_state.posrot) {
+        Mat4 buf;
+        mulMat3(edit_state.objectMatrix,mat,buf);
+        copyMat3(buf,mat);
+        showGrid(mat,edit_axis,old_edit_axis,0);
+    } else
+    if(edit_state.quickPlacement){
+        edit_axis[0] = 1;
+        edit_axis[1] = 0;
+        edit_axis[2] = 1;
+        copyMat3(unitmat, mat);
+        copyVec3(sel.parent->mat[3], mat[3]);
+        showGrid(mat,edit_axis,old_edit_axis,0);
+    } else {
+        if (!edit_state.posrot) {
+            selUpdateShowGrid(mat,edit_axis,old_edit_axis);
+        }
+    }
+}
+
+static int selUpdateNudge(Mat4 mat)
+{
+    if (edit_state.nudgeLeft || edit_state.nudgeRight || edit_state.nudgeUp || edit_state.nudgeDown)
+    {
+        float amt;
+        Vec3 tv;
+        amt=(1<<edit_state.gridsize)/2.0;
+        if (edit_state.plane==1) {
+            int buf;
+            buf=edit_state.nudgeLeft;
+            edit_state.nudgeLeft=edit_state.nudgeDown;
+            edit_state.nudgeDown=buf;
+            buf=edit_state.nudgeUp;
+            edit_state.nudgeUp=edit_state.nudgeRight;
+            edit_state.nudgeRight=buf;
+        }
+        if (!edit_state.sel && edit_state.nudgeLeft) {
+            scaleVec3(mat[0],amt,tv);
+            subVec3(sel.parent->mat[3],tv,sel.parent->mat[3]);
+        }
+        if (!edit_state.sel && edit_state.nudgeRight) {
+            scaleVec3(mat[0],amt,tv);
+            addVec3(sel.parent->mat[3],tv,sel.parent->mat[3]);
+        }
+        if (!edit_state.sel && edit_state.nudgeUp) {
+            scaleVec3(mat[2],amt,tv);
+            addVec3(sel.parent->mat[3],tv,sel.parent->mat[3]);
+        }
+        if (!edit_state.sel && edit_state.nudgeDown) {
+            scaleVec3(mat[2],amt,tv);
+            subVec3(sel.parent->mat[3],tv,sel.parent->mat[3]);
+        }
+        if (!edit_state.sel)
+            edit_state.nudgeLeft=edit_state.nudgeRight=edit_state.nudgeUp=edit_state.nudgeDown=0;
+        return 1;
+    }
+    return 0;
+}
+
+static void selUpdateRotation(int *last_plane,Mat4 localRotationMatrix,Vec3 localPyr)
+{
+    F32 rotval;
+
+    if(edit_state.quickPlacement && edit_state.quickRotate || !edit_state.quickPlacement && edit_state.posrot)
+    {
+        extern int mouse_dy;
+        rotval = RAD(mouse_dy);
+        if (*last_plane != edit_state.plane)
+        {
+            *last_plane = edit_state.plane;
+            copyVec3(snapped_pyr,sel.pyr);
+        }
+        if (edit_state.localrot)
+            zeroVec3(sel.pyr);
+
+        if (!selUpdateQuickOrient(rotval))
+            selUpdateRotationFallback(rotval,localRotationMatrix,localPyr);
+    }
+}
+
+static int selUpdateCommitMove(Mat4 mat,Vec3 dv,int edit_axis[3],int old_edit_axis[3])
+{
+    copyVec3(dv,mat[3]);
+    if (edit_state.nudgeLeft || edit_state.nudgeRight || edit_state.nudgeUp || edit_state.nudgeDown)
+        copyVec3(sel.parent->mat[3],mat[3]);
+    selUpdateShowGrid(mat,edit_axis,old_edit_axis);
+    if (selUpdateNudge(mat))
+        return 0;
+
+    sel.parent->mat[3][0] = dv[0];
+    sel.parent->mat[3][1] = dv[1];
+    sel.parent->mat[3][2] = dv[2];
+    return 1;
+}
+
+static int selUpdatePrepareGrid(Mat4 mat,int edit_axis[3],int old_edit_axis[3],int lost_focus)
+{
+    if (edit_state.quickPlacement || lost_focus || !inpLevel(INP_LBUTTON) || inpIsMouseLocked())
+    {
+        selUpdateGridMode(mat,edit_axis,old_edit_axis);
+
+        if(lost_focus || !inpLevel(INP_LBUTTON) || inpIsMouseLocked())
+        {
+            if (edit_state.nudgeLeft || edit_state.nudgeRight || edit_state.nudgeUp || edit_state.nudgeDown)
+                return 0;
+            g_needRelock = 1;
+            return -1;
+        }
+    }
+    return 1;
+}
+
+int selUpdate(Vec3 start,Vec3 end,int lost_focus)
+{
+    extern int mouse_dx,mouse_dy;
+    F32        x=0,z=0,y=0;
+    Vec3    dv;
+    Mat4    mat;                        //stores the axes and origin of the coordinate system
+                                        //that the object is being modified in (translated, rotated...)
+
+    int        edit_axis[3] = {0,0,0};    //this variable is supposed to determine which axes the object
+                                        //can be modified along, it does not work correctly with the rest
+                                        //of the code, and i think its only purpose now is to tell
+                                        //showGrid which lines to draw
+    static    int last_plane;
+    static int        old_edit_axis[3];
+    Vec3        oldPosition;            //position of the object *now*, which will be old by the
+                                        //end of the function
+    static Vec3    localPyr;                //store the snapped_pyr for local rotations
+    static int    localRotation=0;        //when we first start to localrot, we need to store the matrix
+                                        //this will flag when we first enter localrot
+    static Mat4    localRotationMatrix;    //and this is the matrix
+
+    selUpdateLocalRotation(&localRotation,localRotationMatrix,localPyr);
+
+    if (sel.parent)
+        copyVec3(sel.parent->mat[3],oldPosition);
+
+    selUpdateRadii(lost_focus);
+
+    //i don't think anyone uses zerogrid.  i think if we get rid of it we can also get
+    //rid of showGrid2.  honestly, why do we need a showGrid2?
+    if (edit_state.zerogrid)
+    {
+    int        draw_axis[3] = {1,0,1},zero_axis[3] = {0,0,0};
+
+        showGrid2(unitmat,draw_axis,zero_axis);
+    }
+
+    //!sel.parent means that nothing is selected
+    if (!sel.parent || (edit_state.tintcolor1 || edit_state.tintcolor2))
+    {
+        g_needRelock = 1;
+        return 0;
+    }
+
+retry:
+    setScale();
+    copyMat4(unitmat,mat);
+
+    selUpdateDrawRotationGuide(mat);
+
+    copyVec3(sel.parent->mat[3],mat[3]);
+
+    selUpdateSetAxes(mat,edit_axis);
+    {
+        int grid_state;
+        grid_state=selUpdatePrepareGrid(mat,edit_axis,old_edit_axis,lost_focus);
+        if (grid_state < 0)
+            return 0;
+        if (!grid_state)
+            goto nudger;
     }
     if(!edit_state.quickPlacement)
     {
@@ -532,124 +854,7 @@ retry:
     {
         if (edit_state.posrot || edit_state.quickPlacement)
         {
-            if(edit_state.quickPlacement && edit_state.quickRotate || !edit_state.quickPlacement && edit_state.posrot)
-            {
-                rotval = RAD(mouse_dy);
-                if (last_plane != edit_state.plane)
-                {
-                    last_plane = edit_state.plane;
-                    copyVec3(snapped_pyr,sel.pyr);
-                }
-                if (edit_state.localrot)
-                    zeroVec3(sel.pyr);
-                
-                if(edit_state.quickPlacement && edit_state.quickRotate && edit_state.quickOrient){
-                    static F32 yaw_acc;
-                    static F32 cur_yaw;
-                    
-                    F32 yaw;
-                    Vec3 rot_pyr = {0,0,0};
-                    Mat3 rot_mat;
-                    F32 lock_angle;
-                    Mat4 mat_orig;
-                    
-                    yaw_acc += rotval;
-                    lock_angle = lock_angs[edit_state.rotsize];
-                    
-                    yaw = (int)(DEG(yaw_acc) / lock_angle) * lock_angle;
-                    
-                    yaw = RAD(yaw);
-                    
-                    getVec3YP(quickPlacementRotateNormal, &rot_pyr[1], &rot_pyr[0]);
-                    
-                    //printf("normal: %f\t%f\t%f\n", vecParamsXYZ(quickPlacementRotateNormal));
-                    //printf("pyr:    %f\t%f\t%f\n", vecParamsXYZ(rot_pyr));
-
-                    // I have no idea why this works, the multiply order is totally backwards.
-                    
-                    copyMat3(unitmat, rot_mat);
-                    scaleVec3(rot_pyr, -1, rot_pyr);
-                    createMat3PYR(rot_mat, rot_pyr);
-                    copyMat4(sel.parent->mat, mat_orig);
-                    mulMat3(rot_mat, mat_orig, sel.parent->mat);
-
-                    copyMat3(unitmat, rot_mat);
-                    rollMat3(yaw - cur_yaw, rot_mat);
-                    copyMat4(sel.parent->mat, mat_orig);
-                    mulMat3(rot_mat, mat_orig, sel.parent->mat);
-
-                    copyMat3(unitmat, rot_mat);
-                    scaleVec3(rot_pyr, -1, rot_pyr);
-                    createMat3YPR(rot_mat, rot_pyr);
-                    copyMat4(sel.parent->mat, mat_orig);
-                    mulMat3(rot_mat, mat_orig, sel.parent->mat);
-
-                    cur_yaw = yaw;
-                }else{
-                    switch(edit_state.quickPlacement ? 0 : edit_state.plane)
-                    {
-                        case 0:
-                            sel.pyr[1] += rotval;
-                        xcase 1:
-                            sel.pyr[2] += rotval;
-                        xcase 2:
-                            sel.pyr[0] += rotval;
-                    }
-                    copyVec3(sel.pyr,snapped_pyr);
-                    if (edit_state.localrot)
-                        rotval=0;
-                    {
-                        F32 lock_angle;
-
-                        lock_angle = lock_angs[edit_state.rotsize];
-                        for(i=0;i<3;i++)
-                        {
-                            int        t;
-
-// this line probably needs to be here in some fashion or another
-//                            if (!edit_state.quickPlacement || edit_state.quickPlacement && i != 1)
-//                                continue;
-                            t = DEG(sel.pyr[i]) / lock_angle;
-                            snapped_pyr[i] = RAD(lock_angle * t);
-                        }
-
-                    }
-                    if (edit_state.localrot)
-                    {
-                        Mat4    mat,matx;
-                        Vec3 buf;
-                        addVec3(sel.pyr,localPyr,buf);
-                        copyVec3(buf,localPyr);
-                        zeroVec3(sel.pyr);
-                        if (!edit_state.nosnap)    {
-                            F32 lock_angle;
-                            lock_angle = lock_angs[edit_state.rotsize];
-                            for(i=0;i<3;i++)
-                            {
-                                int        t;
-                                t = DEG(localPyr[i]) / lock_angle;
-                                buf[i] = RAD(lock_angle * t);
-                            }
-                        }
-                        createMat3YPR(mat,buf);
-                        mulMat3(localRotationMatrix,mat,matx);
-                        copyMat3(matx,sel.offsetnode->mat);
-                    } else if (edit_state.useObjectAxes)
-                    {
-                        Mat4    currentMatrix;
-                        Mat4    currentPyrMatrix;
-                        Mat4    revisedMatrix;
-                        mulMat3(sel.parent->mat,edit_state.objectMatrix,currentMatrix);
-                        copyMat3(edit_state.objectMatrix,currentMatrix);
-                        createMat3YPR(currentPyrMatrix,snapped_pyr);
-                        mulMat3(currentMatrix,currentPyrMatrix,revisedMatrix);
-                        mulMat3(revisedMatrix,edit_state.objectMatrixInverse,sel.parent->mat);
-                    }
-                    else {
-                        createMat3YPR(sel.parent->mat,snapped_pyr);
-                    }
-                }
-            }
+            selUpdateRotation(&last_plane,localRotationMatrix,localPyr);
         }
         else
         {
@@ -665,120 +870,13 @@ retry:
                 copyMat3(buf,mat);
             }
 nudger:
-            if (!planeIntersect(start,end,mat,dv))
+            if (!selUpdateMove(start,end,mat,dv))
                 return !g_needRelock;
-            {    //handle which axes the object can be moved along
-                int i;
-                Vec3 move;
-                Vec3 buf,buf2;
-                subVec3(dv,sel.parent->mat[3],move);
-                setVec3(dv,0,0,0);
-                for (i=0;i<3;i++){//(edit_state.singleaxis?1:2);i++) {
-                    double d=dotVec3(move,mat[i]);
-                    if (edit_state.singleaxis && !i)
-                        d=0;
-                    scaleVec3(mat[i],d,buf);
-                    addVec3(buf,dv,buf2);
-                    copyVec3(buf2,dv);
-                }
-                copyVec3(dv,buf);
-                addVec3(sel.parent->mat[3],buf,dv);
-                if (!edit_state.nosnap) {
-                    if(edit_state.snaptype != SNAP_VERT)
-                    {
-                        Vec3 snapped;
-                        double gridsize;
-                        if (edit_state.gridsize==0)
-                            gridsize=.5;
-                        else
-                            gridsize=(double)(1<<(edit_state.gridsize-1));
-                        if (edit_state.useObjectAxes) {
-                            Vec3 buffer;
-                            subVec3(dv,edit_state.objectMatrix[3],buffer);
-                            mulVecMat3(buffer,edit_state.objectMatrixInverse,snapped);
-                        } else
-                            copyVec3(dv,snapped);
-                        for (i=0;i<3;i++)
-                            if ((i+1)%3==edit_state.plane || (!edit_state.singleaxis && i==edit_state.plane))
-                                snapped[i]=((int)((snapped[i])/gridsize))*gridsize;
-                        if (edit_state.useObjectAxes) {
-                            Vec3 buffer;
-                            mulVecMat3(snapped,edit_state.objectMatrix,buffer);
-                            addVec3(buffer,edit_state.objectMatrix[3],dv);
-                        } else
-                            copyVec3(snapped,dv);
-                    }
-                    else
-                    {
-                        copyVec3(sel.pick_point,dv);
-                    }
-                }
-            }
 
 //            copyVec3(dv,mat[3]);
 //            copyVec3(mat[3],dv);
-            copyVec3(dv,mat[3]);
-            if (edit_state.nudgeLeft || edit_state.nudgeRight || edit_state.nudgeUp || edit_state.nudgeDown)
-                copyVec3(sel.parent->mat[3],mat[3]);
-            if (edit_state.singleaxis && edit_state.plane==0)
-            {
-                Vec3 buf;
-                Mat4 mbuf;
-                edit_axis[0]=1;
-                edit_axis[1]=0;
-                copyMat4(mat,mbuf);
-                copyVec3(mat[0],buf);
-                copyVec3(mat[2],mat[0]);
-                copyVec3(buf,mat[2]);
-                copyVec3(mat[1],buf);
-                copyVec3(mat[2],mat[1]);
-                copyVec3(buf,mat[2]);
-                edit_state.plane=2;
-                showGrid(mat,edit_axis,old_edit_axis,edit_state.posrot);
-                copyMat4(mbuf,mat);
-                edit_axis[0]=0;
-                edit_axis[1]=1;
-                edit_state.plane=0;
-            } else 
-                showGrid(mat,edit_axis,old_edit_axis,edit_state.posrot);
-            if (edit_state.nudgeLeft || edit_state.nudgeRight || edit_state.nudgeUp || edit_state.nudgeDown)
-            {
-                float amt;
-                Vec3 tv;
-                amt=(1<<edit_state.gridsize)/2.0;
-                if (edit_state.plane==1) {
-                    int buf;
-                    buf=edit_state.nudgeLeft;
-                    edit_state.nudgeLeft=edit_state.nudgeDown;
-                    edit_state.nudgeDown=buf;
-                    buf=edit_state.nudgeUp;
-                    edit_state.nudgeUp=edit_state.nudgeRight;
-                    edit_state.nudgeRight=buf;
-                }
-                if (!edit_state.sel && edit_state.nudgeLeft) {
-                    scaleVec3(mat[0],amt,tv);
-                    subVec3(sel.parent->mat[3],tv,sel.parent->mat[3]);
-                }
-                if (!edit_state.sel && edit_state.nudgeRight) {
-                    scaleVec3(mat[0],amt,tv);
-                    addVec3(sel.parent->mat[3],tv,sel.parent->mat[3]);
-                }
-                if (!edit_state.sel && edit_state.nudgeUp) {
-                    scaleVec3(mat[2],amt,tv);
-                    addVec3(sel.parent->mat[3],tv,sel.parent->mat[3]);
-                }
-                if (!edit_state.sel && edit_state.nudgeDown) {
-                    scaleVec3(mat[2],amt,tv);
-                    subVec3(sel.parent->mat[3],tv,sel.parent->mat[3]);
-                }
-                if (!edit_state.sel)
-                    edit_state.nudgeLeft=edit_state.nudgeRight=edit_state.nudgeUp=edit_state.nudgeDown=0;
+            if (!selUpdateCommitMove(mat,dv,edit_axis,old_edit_axis))
                 return 0;
-            }
-
-            sel.parent->mat[3][0] = dv[0];
-            sel.parent->mat[3][1] = dv[1];
-            sel.parent->mat[3][2] = dv[2];
         }
     }
     copyVec3(sel.parent->mat[3],edit_stats.cursor_pos);
@@ -1002,32 +1100,32 @@ static void editDrawNxShape(DefTracker* nxTracker)
     {
         nxTracker = nxTracker->parent;
     }
-    
+
     if(nxTracker)
     {
         GroupDefNxInfo* novodex = &nxTracker->def->novodex;
         Vec3* mat = nxTracker->mat;
         int k;
-        
+
         for(k = 0; k < novodex->shapes.size; k++)
         {
             GroupDefNxShapeInfo* shape = novodex->shapes.shape + k;
             int j;
-            
+
             for(j = 0; j < shape->tri_count; j++){
                 void drawLineCheckOrient(Mat3 orient_mat,Vec3 base_pos,Vec3 la,Vec3 lb,U8 c[4],F32 width);
                 Vec3 v0[3];
                 Vec3 v1[3];
                 U8 c[4] = {255,255,255,255};
-                
+
                 copyVec3(shape->verts[shape->tris[j*3+0]], v0[0]);
                 copyVec3(shape->verts[shape->tris[j*3+1]], v0[1]);
                 copyVec3(shape->verts[shape->tris[j*3+2]], v0[2]);
-                
+
                 mulVecMat4(v0[0], mat, v1[0]);
                 mulVecMat4(v0[1], mat, v1[1]);
                 mulVecMat4(v0[2], mat, v1[2]);
-                
+
                 drawLineCheckOrient(NULL,NULL,v1[0],v1[1],c,3);
                 drawLineCheckOrient(NULL,NULL,v1[1],v1[2],c,3);
                 drawLineCheckOrient(NULL,NULL,v1[2],v1[0],c,3);
@@ -1037,36 +1135,194 @@ static void editDrawNxShape(DefTracker* nxTracker)
 }
 */
 
-DefTracker *mouseOverSel(Vec3 start,Vec3 end,int lose_focus)
+static void mouseOverSelQuickPlacement(CollInfo *coll)
 {
-    CollInfo    coll;
-    DefTracker        *tracker = 0;
-    Mat4    matx;
-    Mat4    temp;
-    Model    *model;
-    int            x,y;
-    Vec3        dv;
-    int            hit=0,hit_currsel=0,vsnap=0;
-    int            mouseLocked = inpIsMouseLocked();
-    int snapVertSelect = edit_state.snaptype == SNAP_VERT && !inpLevel(INP_LDRAG);
+    copyVec3(coll->mat[1], quickPlacementRotateNormal);
 
-    mouseover_ctri_idx = -1;
-    mouseover_tracker = 0;
-    inpMousePos(&x,&y);
+    if(edit_state.quickPlacementObject[0]){
+        Vec3 pos;
+        sel.lib_load = 0;
 
+        if(!sel.parent)
+            copyMat4(unitmat, sel.fake_ref.mat);
 
-    gfxCursor3d(x,y,10000,start,end);
-    if (edit_state.nosnap)
-        sprintf(edit_stats.snap,"NoSnap");
-    else if (edit_state.snaptype == SNAP_VERT)
-    {
-        sprintf(edit_stats.snap,"VertSnap");
-        vsnap = COLL_NEARESTVERTEX;
+        copyVec3(sel.pick_point, pos);
+        if(!edit_state.nosnap)
+        {
+            float gridsize = 0.5f * (1 << edit_state.gridsize);
+            float x, z;
+
+            x = pos[0];
+
+            pos[0] -= fmod(x, gridsize);
+
+            if(fabs(fmod(x, gridsize)) > gridsize / 2.0)
+            {
+                if(x < 0)
+                    pos[0] -= gridsize;
+                else
+                    pos[0] += gridsize;
+            }
+
+            z = pos[2];
+
+            pos[2] -= fmod(z, gridsize);
+
+            if(fabs(fmod(z, gridsize)) > gridsize / 2.0)
+            {
+                if(z < 0)
+                    pos[2] -= gridsize;
+                else
+                    pos[2] += gridsize;
+            }
+
+            copyVec3(pos, sel.pick_point);
+        }
+
+        if(edit_state.quickOrient)
+        {
+            Vec3 offset;
+            scaleVec3(coll->mat[1], edit_state.groundoffset, offset);
+            addVec3(offset, pos, pos);
+        }
+        else
+        {
+            pos[1] += edit_state.groundoffset;
+        }
+
+        if(!sel.parent){
+            sel.fake_ref.def = groupDefFind(edit_state.quickPlacementObject);
+            if (sel.fake_ref.def)// && !sel.lib_load)
+            {
+                if(edit_state.quickOrient)
+                {
+                    copyMat3(coll->mat, sel.fake_ref.mat);
+                }
+                else
+                {
+                    copyMat3(edit_state.quickPlacementMat3, sel.fake_ref.mat);
+                }
+                unSelect(1);
+                selCopy(pos);
+                if(edit_state.quickPlacement == 2){
+                    editCmdPaste();
+                }
+            }
+            else
+            {
+                editDefLoad(edit_state.quickPlacementObject);
+                sel.lib_load = 1;
+            }
+        }else{
+            //Mat4 mat;
+            //printf("%1.2f, %1.2f, %1.2f\n", sel.parent->mat[2][0], sel.parent->mat[2][1], sel.parent->mat[2][2]);
+            //mulMat4(sel.parent->mat,sel.offsetnode->mat,mat);
+            //copyMat3(sel.parent->mat,sel.offsetnode->mat);
+
+            if(edit_state.quickOrient)
+            {
+                copyMat3(coll->mat, sel.offsetnode->mat);
+            }
+
+            zeroVec3(sel.offsetnode->mat[3]);
+
+            //copyMat3(unitmat, sel.parent->mat);
+            copyVec3(pos, sel.parent->mat[3]);
+        }
     }
-    else if (edit_state.snaptype == SNAP_CENTER)
-        sprintf(edit_stats.snap,"CenterSnap");
+    edit_state.sel = 0;
+}
 
-    coll.node_callback = editCollNodeCallback;
+static DefTracker *mouseOverSelApplyMode(DefTracker *tracker)
+{
+    if(edit_state.beaconSelect && edit_state.sel)
+    {
+        if(tracker)
+        {
+            if(!tracker->def->has_beacon || !tracker->def->has_sound)
+            {
+                tracker = tracker->parent;
+                if(!tracker || !(tracker->def->has_beacon || tracker->def->has_sound))
+                {
+                    tracker = NULL;
+                }
+                else
+                {
+                    DefTracker* parent = tracker->parent;
+                    for(;parent; parent = parent->parent)
+                    {
+                        parent->edit = 1;
+                    }
+                }
+            }
+
+        }
+    }
+    else if(edit_state.openOnSelection && edit_state.sel)
+    {
+        if(tracker)
+        {
+            tracker = tracker->parent;
+            if(!tracker)
+            {
+                tracker = NULL;
+            }
+            else
+            {
+                DefTracker* parent = tracker->parent;
+                for(;parent; parent = parent->parent)
+                {
+                    parent->edit = 1;
+                }
+            }
+        }
+    }
+    else
+    {
+        edit_state.tracker_under_mouse = tracker;
+
+        for(;tracker && tracker->parent;tracker = tracker->parent)
+        {
+            if (tracker->parent->edit)
+                break;
+        }
+    }
+    return tracker;
+}
+
+static void mouseOverSelUpdateTrackerInfo(DefTracker *tracker,Model *model,CollInfo *coll)
+{
+    DefTracker    *ref;
+    Mat4        mat;
+
+    ref = trackerRoot(tracker);
+#if 0
+    xyprintf(4,31,"POS: %f %f %f",tracker->mat[3][0],tracker->mat[3][1],tracker->mat[3][2]);
+    xyprintf(4,32,"NAME %s",model->name);
+#endif
+    strcpy(edit_stats.geo,model->name);
+
+//    copyVec3(coll->mat[3],edit_stats.cursor_pos);
+    copyVec3(coll->mat[3],mat[3]);
+    strcpy(edit_stats.group,tracker->def->name);
+    if (edit_state.quickPlacement || edit_state.snaptype == SNAP_CENTER && !edit_state.nosnap)
+        trackerGetMat(tracker,ref,mat);
+    add3dCursor(mat[3], edit_state.quickPlacement ? mat : NULL);
+
+    /*
+    if(edit_state.quickPlacement && edit_state.tracker_under_mouse)
+    {
+        editDrawNxShape(edit_state.tracker_under_mouse);
+    }
+    */
+
+//                xyprintf(11,11,"%s",tracker->def->name);
+}
+
+static int mouseOverSelCurrent(Vec3 start,Vec3 end,CollInfo *coll,Mat4 matx,Mat4 temp,int snapVertSelect,int vsnap,int *hit)
+{
+    int hit_currsel=0;
+    Vec3 dv;
 
     if (sel.parent)
     {
@@ -1074,9 +1330,9 @@ DefTracker *mouseOverSel(Vec3 start,Vec3 end,int lose_focus)
         Mat4    mat,inv_mat;
         if (edit_state.snaptovert)
         {
-            hit = (collGrid(0,start,end,&coll,0,g_edit_collide_flags | COLL_HITANYSURF | COLL_NEARESTVERTEX | COLL_DISTFROMSTART | COLL_NODECALLBACK));
-            if (hit)
-                copyVec3(coll.mat[3],sel.snap_pos);
+            *hit = (collGrid(0,start,end,coll,0,g_edit_collide_flags | COLL_HITANYSURF | COLL_NEARESTVERTEX | COLL_DISTFROMSTART | COLL_NODECALLBACK));
+            if (*hit)
+                copyVec3(coll->mat[3],sel.snap_pos);
         }
         mulMat4(sel.parent->mat,sel.offsetnode->mat,matx);
         mulMat4(matx,sel.scalenode->mat,mat);
@@ -1090,235 +1346,114 @@ DefTracker *mouseOverSel(Vec3 start,Vec3 end,int lose_focus)
             //copyMat4(sel.parent->mat, temp);
             copyMat4(matx,edit_state.last_selected_tracker->mat);
         }
-        
+
         if(!sel.parent || !edit_state.sel || !edit_state.quickPlacement)
         {
-            if (collGrid(&sel.grid,startx,endx,&coll,0,g_edit_collide_flags | vsnap | COLL_HITANYSURF | COLL_DISTFROMSTART | COLL_NODECALLBACK))
+            if (collGrid(&sel.grid,startx,endx,coll,0,g_edit_collide_flags | vsnap | COLL_HITANYSURF | COLL_DISTFROMSTART | COLL_NODECALLBACK))
             {
-                hit_currsel = hit = 1;
-                mulVecMat4(coll.mat[3],mat,dv);
-                copyVec3(dv,coll.mat[3]);
+                hit_currsel = *hit = 1;
+                mulVecMat4(coll->mat[3],mat,dv);
+                copyVec3(dv,coll->mat[3]);
             }
         }
     }
+    return hit_currsel;
+}
+
+static void mouseOverSelPrepare(Vec3 start,Vec3 end,CollInfo *coll,int *vsnap)
+{
+    int x,y;
+
+    inpMousePos(&x,&y);
+    gfxCursor3d(x,y,10000,start,end);
+    if (edit_state.nosnap)
+        sprintf(edit_stats.snap,"NoSnap");
+    else if (edit_state.snaptype == SNAP_VERT)
+    {
+        sprintf(edit_stats.snap,"VertSnap");
+        *vsnap = COLL_NEARESTVERTEX;
+    }
+    else if (edit_state.snaptype == SNAP_CENTER)
+        sprintf(edit_stats.snap,"CenterSnap");
+
+    coll->node_callback = editCollNodeCallback;
+}
+
+static DefTracker *mouseOverSelHandleHit(CollInfo *coll,int hit_currsel,int snapVertSelect)
+{
+    DefTracker *tracker;
+    Model *model;
+
+    copyVec3(coll->mat[3],sel.pick_point);
+    sel.use_pick_point = 1;
+
+    tracker = coll->node;
+    model = tracker->def->model;
+    mouseover_ctri_idx = coll->tri_idx;
+    mouseover_tracker = tracker;
+
+    if(edit_state.sel)
+    {
+        setVec3(quickPlacementRotateNormal, 0, 1, 0);
+    }
+
+    if(edit_state.quickPlacement && edit_state.sel)
+    {
+        mouseOverSelQuickPlacement(coll);
+    }
+    else
+    {
+        tracker = mouseOverSelApplyMode(tracker);
+    }
+
+    if ((!hit_currsel || snapVertSelect) && (tracker && tracker->def->name))
+    {
+        mouseOverSelUpdateTrackerInfo(tracker,model,coll);
+    }
+
+    if(sel.parent && edit_state.quickPlacement && edit_state.quickRotate)
+    {
+        Mat4 matx;
+        mulMat4(sel.parent->mat, sel.fake_ref.mat, matx);
+        add3dCursor(sel.parent->mat[3], matx);
+    }
+    return tracker;
+}
+
+DefTracker *mouseOverSel(Vec3 start,Vec3 end,int lose_focus)
+{
+    CollInfo    coll;
+    DefTracker        *tracker = 0;
+    Mat4    matx;
+    Mat4    temp;
+    int            hit=0,hit_currsel=0,vsnap=0;
+    int            mouseLocked = inpIsMouseLocked();
+    int snapVertSelect = edit_state.snaptype == SNAP_VERT && !inpLevel(INP_LDRAG);
+
+    mouseover_ctri_idx = -1;
+    mouseover_tracker = 0;
+    mouseOverSelPrepare(start,end,&coll,&vsnap);
+
+    hit_currsel = mouseOverSelCurrent(start,end,&coll,matx,temp,snapVertSelect,vsnap,&hit);
     edit_stats.geo[0] = 0;
     edit_stats.group[0] = 0;
     if ((!hit && !mouseLocked) || (hit && edit_state.snaptype == SNAP_VERT && inpLevel(INP_LBUTTON)))    //don't select ghost vertices if you're dragging with vert snap
     {
         int extra_flags = 0;
-        
+
         if(edit_state.selectEditOnly){
             extra_flags |= COLL_EDITONLY;
         }
         else if(!edit_state.sel || !edit_state.quickPlacement){
             extra_flags |= COLL_HITANYSURF;
         }
-        
+
         hit = (collGrid(0,start,end,&coll,0,g_edit_collide_flags | vsnap | COLL_DISTFROMSTART | COLL_NODECALLBACK | extra_flags));
     }
     if (lose_focus)
         sel.use_pick_point = 0;
     if (hit && !lose_focus)
-    {
-        copyVec3(coll.mat[3],sel.pick_point);
-        sel.use_pick_point = 1;
-
-        tracker = coll.node;
-        model = tracker->def->model;
-        mouseover_ctri_idx = coll.tri_idx;
-        mouseover_tracker = tracker;
-        
-        if(edit_state.sel)
-        {
-            setVec3(quickPlacementRotateNormal, 0, 1, 0);
-        }
-        
-        if(edit_state.quickPlacement && edit_state.sel)
-        {
-            copyVec3(coll.mat[1], quickPlacementRotateNormal);
-        
-            if(edit_state.quickPlacementObject[0]){
-                Vec3 pos;
-                sel.lib_load = 0;
-
-                if(!sel.parent)
-                    copyMat4(unitmat, sel.fake_ref.mat);
-                    
-                copyVec3(sel.pick_point, pos);
-                if(!edit_state.nosnap)
-                {
-                    float gridsize = 0.5f * (1 << edit_state.gridsize);
-                    float x, z;
-
-                    x = pos[0];
-                    
-                    pos[0] -= fmod(x, gridsize);
-                    
-                    if(fabs(fmod(x, gridsize)) > gridsize / 2.0)
-                    {
-                        if(x < 0)
-                            pos[0] -= gridsize;
-                        else
-                            pos[0] += gridsize;
-                    }
-                    
-                    z = pos[2];
-                    
-                    pos[2] -= fmod(z, gridsize);
-                    
-                    if(fabs(fmod(z, gridsize)) > gridsize / 2.0)
-                    {
-                        if(z < 0)
-                            pos[2] -= gridsize;
-                        else
-                            pos[2] += gridsize;
-                    }
-
-                    copyVec3(pos, sel.pick_point);
-                }
-                
-                if(edit_state.quickOrient)
-                {
-                    Vec3 offset;
-                    scaleVec3(coll.mat[1], edit_state.groundoffset, offset);
-                    addVec3(offset, pos, pos);
-                }
-                else
-                {
-                    pos[1] += edit_state.groundoffset;
-                }
-
-                if(!sel.parent){
-                    sel.fake_ref.def = groupDefFind(edit_state.quickPlacementObject);
-                    if (sel.fake_ref.def)// && !sel.lib_load)
-                    {
-                        if(edit_state.quickOrient)
-                        {
-                            copyMat3(coll.mat, sel.fake_ref.mat);
-                        }
-                        else
-                        {
-                            copyMat3(edit_state.quickPlacementMat3, sel.fake_ref.mat);
-                        }
-                        unSelect(1);
-                        selCopy(pos);
-                        if(edit_state.quickPlacement == 2){
-                            editCmdPaste();
-                        }
-                    }
-                    else
-                    {
-                        editDefLoad(edit_state.quickPlacementObject);
-                        sel.lib_load = 1;
-                    }
-                }else{
-                    //Mat4 mat;
-                    //printf("%1.2f, %1.2f, %1.2f\n", sel.parent->mat[2][0], sel.parent->mat[2][1], sel.parent->mat[2][2]);
-                    //mulMat4(sel.parent->mat,sel.offsetnode->mat,mat);
-                    //copyMat3(sel.parent->mat,sel.offsetnode->mat);
-                    
-                    if(edit_state.quickOrient)
-                    {
-                        copyMat3(coll.mat, sel.offsetnode->mat);
-                    }
-
-                    zeroVec3(sel.offsetnode->mat[3]);
-
-                    //copyMat3(unitmat, sel.parent->mat);
-                    copyVec3(pos, sel.parent->mat[3]);
-                }
-            }
-            edit_state.sel = 0;
-        }
-        else if(edit_state.beaconSelect && edit_state.sel)
-        {
-            if(tracker)
-            {
-                if(!tracker->def->has_beacon || !tracker->def->has_sound)
-                {
-                    tracker = tracker->parent;
-                    if(!tracker || !(tracker->def->has_beacon || tracker->def->has_sound))
-                    {
-                        tracker = NULL;
-                    }
-                    else
-                    {
-                        DefTracker* parent = tracker->parent;
-                        for(;parent; parent = parent->parent)
-                        {
-                            parent->edit = 1;
-                        }
-                    }
-                }
-            }
-        }
-        else if(edit_state.openOnSelection && edit_state.sel)
-        {
-            if(tracker)
-            {
-                tracker = tracker->parent;
-                if(!tracker)
-                {
-                    tracker = NULL;
-                }
-                else
-                {
-                    DefTracker* parent = tracker->parent;
-                    for(;parent; parent = parent->parent)
-                    {
-                        parent->edit = 1;
-                    }
-                }
-            }
-        }
-        else 
-        {
-            edit_state.tracker_under_mouse = tracker;
-            
-            for(;tracker && tracker->parent;tracker = tracker->parent)
-            {
-                if (tracker->parent->edit)
-                    break;
-            }
-        }
-
-        if ((!hit_currsel || snapVertSelect) && (tracker && tracker->def->name))
-        {
-        DefTracker    *ref;
-        Mat4        mat;
-
-            subVec3(coll.mat[3],start,dv);
-            ref = trackerRoot(tracker);
-#if 0
-            xyprintf(4,31,"POS: %f %f %f",tracker->mat[3][0],tracker->mat[3][1],tracker->mat[3][2]);
-            xyprintf(4,32,"NAME %s",model->name);
-#endif
-            strcpy(edit_stats.geo,model->name);
-
-        //    copyVec3(coll.mat[3],edit_stats.cursor_pos);
-            copyVec3(coll.mat[3],mat[3]);
-            strcpy(edit_stats.group,tracker->def->name);
-            if (edit_state.quickPlacement || edit_state.snaptype == SNAP_CENTER && !edit_state.nosnap)
-                trackerGetMat(tracker,ref,mat);
-            add3dCursor(mat[3], edit_state.quickPlacement ? mat : NULL);
-            
-            /*
-            if(edit_state.quickPlacement && edit_state.tracker_under_mouse)
-            {
-                editDrawNxShape(edit_state.tracker_under_mouse);
-            }
-            */
-            
-//                xyprintf(11,11,"%s",tracker->def->name);
-        }
-
-        if(sel.parent && edit_state.quickPlacement && edit_state.quickRotate)
-        {
-            Mat4 matx;
-            mulMat4(sel.parent->mat, sel.fake_ref.mat, matx);
-            add3dCursor(sel.parent->mat[3], matx);
-        }
-    }
+        tracker = mouseOverSelHandleHit(&coll,hit_currsel,snapVertSelect);
     if(sel.parent && edit_state.last_selected_tracker && snapVertSelect)
     {
         copyMat4(temp, edit_state.last_selected_tracker->mat);
@@ -1410,9 +1545,66 @@ void getAllPropertyValues2(char * name,char *** values) {
 
 // this function will not prompt the user in any way, so it
 // will overwrite properties that were already there, be careful!
+static void addPropertiesToTracker(GroupDef *def,PropertyEnt **props)
+{
+    int j;
+
+    if(!def->properties){
+        def->properties = stashTableCreateWithStringKeys(16,  StashDeepCopyKeys);
+        def->has_properties = 1;
+    }
+    for (j=0;j<eaSize(&props);j++)
+    {
+        PropertyEnt *prop;
+        if(stashRemovePointer(def->properties,props[j]->name_str, &prop))
+            destroyPropertyEnt(prop);
+        stashAddPointer(def->properties, props[j]->name_str, props[j], 0);
+
+        if (stricmp(props[j]->name_str, "VisTray")==0 ||
+            stricmp(props[j]->name_str, "VisOutside")==0 ||
+            stricmp(props[j]->name_str, "VisOutsideOnly")==0 ||
+            stricmp(props[j]->name_str, "SoundOccluder")==0 ||
+            stricmp(props[j]->name_str, "DoWelding")==0)
+        {
+            groupSetTrickFlags(def);
+        }
+    }
+}
+
+static void removeAddedPropertyFromTracker(DefTracker *tracker,PropertyEnt *property)
+{
+    PropertyEnt *prop;
+
+    stashFindPointer(tracker->def->properties,property->name_str, &prop);
+    if (prop==NULL)
+        return;    //this means is was already deleted from a previous tracker with the same def
+    stashRemovePointer(tracker->def->properties,property->name_str, NULL);
+    destroyPropertyEnt(prop);
+    if (stashGetValidElementCount(tracker->def->properties)==0) {
+        stashTableDestroy(tracker->def->properties);
+        tracker->def->properties=0;
+        tracker->def->has_properties=0;
+    }
+}
+
+static void addPropertiesApplyToSelectedTrackers(PropertyEnt **props)
+{
+    int i;
+
+    for (i=0;i<sel_count;i++)
+        addPropertiesToTracker(sel_list[i].def_tracker->def,props);
+    propertyUpdateTrackers();
+
+    for (i=0;i<sel_count;i++)
+    {
+        int j;
+        for (j=0;j<eaSize(&props);j++)
+            removeAddedPropertyFromTracker(sel_list[i].def_tracker,props[j]);
+    }
+}
+
 void addPropertiesToSelectedTrackers(char * name1,char * value1,...) {
     va_list args;
-    int i;
     PropertyEnt ** props = NULL;
     char *name = name1;
     char *value = value1;
@@ -1444,54 +1636,28 @@ void addPropertiesToSelectedTrackers(char * name1,char * value1,...) {
     function should be called as a response to clicking OK in the dialog
     */
 
-    for (i=0;i<sel_count;i++)
-    {
-        int j;
-        GroupDef * def = sel_list[i].def_tracker->def;
-        if(!def->properties){
-            def->properties = stashTableCreateWithStringKeys(16,  StashDeepCopyKeys);
-            def->has_properties = 1;
-        }
-        for (j=0;j<eaSize(&props);j++)
-        {
-            PropertyEnt *prop;
-            if(stashRemovePointer(def->properties,props[j]->name_str, &prop))
-                destroyPropertyEnt(prop);
-            stashAddPointer(def->properties, props[j]->name_str, props[j], 0);
-
-            if (stricmp(props[j]->name_str, "VisTray")==0 ||
-                stricmp(props[j]->name_str, "VisOutside")==0 ||
-                stricmp(props[j]->name_str, "VisOutsideOnly")==0 ||
-                stricmp(props[j]->name_str, "SoundOccluder")==0 ||
-                stricmp(props[j]->name_str, "DoWelding")==0)
-            {
-                groupSetTrickFlags(def);
-            }
-        }
-    }
-    propertyUpdateTrackers();
-
-    for (i=0;i<sel_count;i++)
-    {
-        int j;
-        for (j=0;j<eaSize(&props);j++)
-        {
-            PropertyEnt *prop;
-            DefTracker * tracker=sel_list[i].def_tracker;
-            stashFindPointer( tracker->def->properties,props[j]->name_str, &prop );
-            if (prop==NULL)
-                continue;    //this means is was already deleted from a previous tracker with the same def
-            stashRemovePointer(tracker->def->properties,props[j]->name_str, NULL);
-            destroyPropertyEnt(prop);
-            if (stashGetValidElementCount(tracker->def->properties)==0) {
-                stashTableDestroy(tracker->def->properties);
-                tracker->def->properties=0;
-                tracker->def->has_properties=0;
-            }
-        }
-    }
-
+    addPropertiesApplyToSelectedTrackers(props);
     eaDestroy(&props);
+}
+
+static void removePropertyFromTracker(GroupDef *def,char *name)
+{
+    if (def->properties==NULL)
+        return;
+    stashRemovePointer(def->properties,name,NULL);
+    if (stashGetValidElementCount(def->properties)==0) {
+        stashTableDestroy(def->properties);
+        def->properties=0;
+        def->has_properties=0;
+    }
+}
+
+static void removePropertyFromSelectedTrackers(char *name)
+{
+    int i;
+
+    for (i=0;i<sel_count;i++)
+        removePropertyFromTracker(sel_list[i].def_tracker->def,name);
 }
 
 // WARNING: This is really only supposed to be used in conjuction with
@@ -1499,38 +1665,15 @@ void addPropertiesToSelectedTrackers(char * name1,char * value1,...) {
 // server, so make sure to call the above function first so it gets updated
 void removePropertiesFromSelectedTrackers(char * name1,...) {
     va_list args;
-    int i;
     char * name;
 
     updatePropertiesMenu = true;
 
-    for (i=0;i<sel_count;i++)
-    {
-        GroupDef * def = sel_list[i].def_tracker->def;
-        if (def->properties) {
-            stashRemovePointer(def->properties,name1, NULL);
-            if (stashGetValidElementCount(def->properties)==0) {
-                stashTableDestroy(def->properties);
-                def->properties=0;
-                def->has_properties=0;
-            }
-        }
-    }
+    removePropertyFromSelectedTrackers(name1);
     va_start(args,name1);
     name=va_arg(args,char *);
     while (name!=NULL) {
-        for (i=0;i<sel_count;i++)
-        {
-            GroupDef * def = sel_list[i].def_tracker->def;
-            if (def->properties==NULL)
-                continue;
-            stashRemovePointer(def->properties,name,NULL);
-            if (stashGetValidElementCount(def->properties)==0) {
-                stashTableDestroy(def->properties);
-                def->properties=0;
-                def->has_properties=0;
-            }
-        }
+        removePropertyFromSelectedTrackers(name);
         name=va_arg(args,char *);
     }
     va_end(args);
@@ -1651,21 +1794,8 @@ void addDestroyablePropertiesConstrainMaxHealth(int notUsed) {
         addDestroyablePropInfo.max=addDestroyablePropInfo.min;
 }
 
-void addDestroyableProperties() {
-    ZeroStruct(&addDestroyablePropInfo);
-    editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
-        editorUIAddRadioButtons(addPropInfo.ID,0,&addDestroyablePropInfo.state,NULL,"Not Destroyable","Parent","Child",NULL);
-        editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
-        editorUIEndSubWidgets(addPropInfo.ID);
-        editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
-            editorUIAddSlider(addPropInfo.ID,&addDestroyablePropInfo.health,0,100,1,NULL,"Health");
-        editorUIEndSubWidgets(addPropInfo.ID);
-        editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
-            editorUIAddSlider(addPropInfo.ID,&addDestroyablePropInfo.min,0,100,1,addDestroyablePropertiesConstrainMaxHealth,"Min Health");
-            editorUIAddSlider(addPropInfo.ID,&addDestroyablePropInfo.max,0,100,1,addDestroyablePropertiesConstrainMinHealth,"Max Health");
-            editorUIAddCheckBox(addPropInfo.ID,&addDestroyablePropInfo.repairing,NULL,"Repairing");
-        editorUIEndSubWidgets(addPropInfo.ID);
-    editorUIEndSubWidgets(addPropInfo.ID);
+static void addDestroyablePropertiesLoadState(void)
+{
     if (stashFindElement(sel_list[0].def_tracker->def->properties,"Health",NULL)) {
         PropertyEnt * prop;
         stashFindPointer(sel_list[0].def_tracker->def->properties,"Health",&prop);
@@ -1685,6 +1815,24 @@ void addDestroyableProperties() {
         addDestroyablePropInfo.state=2;
     } else
         addDestroyablePropInfo.state=0;
+}
+
+void addDestroyableProperties() {
+    ZeroStruct(&addDestroyablePropInfo);
+    editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
+        editorUIAddRadioButtons(addPropInfo.ID,0,&addDestroyablePropInfo.state,NULL,"Not Destroyable","Parent","Child",NULL);
+        editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
+        editorUIEndSubWidgets(addPropInfo.ID);
+        editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
+            editorUIAddSlider(addPropInfo.ID,&addDestroyablePropInfo.health,0,100,1,NULL,"Health");
+        editorUIEndSubWidgets(addPropInfo.ID);
+        editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
+            editorUIAddSlider(addPropInfo.ID,&addDestroyablePropInfo.min,0,100,1,addDestroyablePropertiesConstrainMaxHealth,"Min Health");
+            editorUIAddSlider(addPropInfo.ID,&addDestroyablePropInfo.max,0,100,1,addDestroyablePropertiesConstrainMinHealth,"Max Health");
+            editorUIAddCheckBox(addPropInfo.ID,&addDestroyablePropInfo.repairing,NULL,"Repairing");
+        editorUIEndSubWidgets(addPropInfo.ID);
+    editorUIEndSubWidgets(addPropInfo.ID);
+    addDestroyablePropertiesLoadState();
 }
 
 void addDestroyablePropertiesToTrackers() {
@@ -1790,19 +1938,41 @@ int addPropertyOtherProperty(int widgetID) {
     return 1;
 }
 
-void addPropertyCreateMenu(MenuEntry * me,ClickInfo * ci) {
-    static int temp=1;
-    char ** list=0;
-    int i=0;
-    edit_state.addProperty = 0;
-    if (addPropInfo.ID)
-        return;
-    if (sel_count==0)
-        return;
-    editWaitingForServer(1, 0);
-    ZeroStruct(&addPropInfo);
-    for (i=0;i<eaSize(&g_propertyDefList.list);i++)
-        eaPush(&list,g_propertyDefList.list[i]->name);
+static void addPropertyCreateNormalWidgets(void)
+{
+    int i;
+
+    for (i=0;i<eaSize(&g_propertyDefList.list);i++) {
+        int temp=editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
+        if (i==0)
+            addPropInfo.startingWidgetID=temp;
+        if (g_propertyDefList.list[i]->type==PROPTYPE_TEXTBOX)
+            editorUIAddTextEntry(addPropInfo.ID,addPropInfo.value,256,clean_value,"Value");
+        else
+        if (g_propertyDefList.list[i]->type==PROPTYPE_COMBOBOX)
+            editorUIAddComboBoxFromEArray(addPropInfo.ID,&addPropInfo.whichValue,"Value",addPropertyValueChange,g_propertyDefList.list[i]->texts);
+        else
+        if (g_propertyDefList.list[i]->type==PROPTYPE_SLIDER) {
+            int sliderID;
+            editorUIAddTextEntry(addPropInfo.ID,addPropInfo.value,256,addPropertySliderValueChanged,"Value");
+            sliderID = editorUIAddSlider(addPropInfo.ID,&addPropInfo.valueFloat,g_propertyDefList.list[i]->min,g_propertyDefList.list[i]->max,0,addPropertySliderSliderChanged,"");
+            editorUISetWidgetCallbackParam(sliderID, i);
+        } else
+        if (g_propertyDefList.list[i]->type==PROPTYPE_INTEGERSLIDER) {
+            int sliderID;
+            editorUIAddTextEntry(addPropInfo.ID,addPropInfo.value,256,addPropertySliderValueChanged,"Value");
+            sliderID = editorUIAddSlider(addPropInfo.ID,&addPropInfo.valueFloat,g_propertyDefList.list[i]->min,g_propertyDefList.list[i]->max,1,addPropertySliderSliderChanged,"");
+            editorUISetWidgetCallbackParam(sliderID, i);
+        } else
+        if (g_propertyDefList.list[i]->type==PROPTYPE_RADIOBUTTONS)
+            editorUIAddRadioButtonsFromEArray(addPropInfo.ID,&addPropInfo.whichValue,addPropertyValueChange,g_propertyDefList.list[i]->texts);
+
+        editorUIEndSubWidgets(addPropInfo.ID);
+    }
+}
+
+static void addPropertyCreateMenuBuildWindow(char **list)
+{
     editorUIDestroyWindow(addPropInfo.ID);
     addPropInfo.ID=editorUICreateWindow("Add Property");
     editorUISetCloseCallback(addPropInfo.ID,addPropertyDestroyWindow);
@@ -1810,35 +1980,7 @@ void addPropertyCreateMenu(MenuEntry * me,ClickInfo * ci) {
         editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
             editorUIAddSubWidgets(addPropInfo.ID,addPropertyNormalProperty,0,0);
                 editorUIAddComboBoxFromEArray(addPropInfo.ID,&addPropInfo.whichName,"Name",addPropertyPropertiesChanged,list);
-
-                    for (i=0;i<eaSize(&g_propertyDefList.list);i++) {
-                        int temp=editorUIAddSubWidgets(addPropInfo.ID,editorUIShowByParentSelection,0,0);
-                        if (i==0)
-                            addPropInfo.startingWidgetID=temp;
-                        if (g_propertyDefList.list[i]->type==PROPTYPE_TEXTBOX)
-                            editorUIAddTextEntry(addPropInfo.ID,addPropInfo.value,256,clean_value,"Value");
-                        else
-                        if (g_propertyDefList.list[i]->type==PROPTYPE_COMBOBOX)
-                            editorUIAddComboBoxFromEArray(addPropInfo.ID,&addPropInfo.whichValue,"Value",addPropertyValueChange,g_propertyDefList.list[i]->texts);
-                        else
-                        if (g_propertyDefList.list[i]->type==PROPTYPE_SLIDER) {
-                            int sliderID;
-                            editorUIAddTextEntry(addPropInfo.ID,addPropInfo.value,256,addPropertySliderValueChanged,"Value");
-                            sliderID = editorUIAddSlider(addPropInfo.ID,&addPropInfo.valueFloat,g_propertyDefList.list[i]->min,g_propertyDefList.list[i]->max,0,addPropertySliderSliderChanged,"");
-                            editorUISetWidgetCallbackParam(sliderID, i);
-                        } else
-                        if (g_propertyDefList.list[i]->type==PROPTYPE_INTEGERSLIDER) {
-                            int sliderID;
-                            editorUIAddTextEntry(addPropInfo.ID,addPropInfo.value,256,addPropertySliderValueChanged,"Value");
-                            sliderID = editorUIAddSlider(addPropInfo.ID,&addPropInfo.valueFloat,g_propertyDefList.list[i]->min,g_propertyDefList.list[i]->max,1,addPropertySliderSliderChanged,"");
-                            editorUISetWidgetCallbackParam(sliderID, i);
-                        } else
-                        if (g_propertyDefList.list[i]->type==PROPTYPE_RADIOBUTTONS)
-                            editorUIAddRadioButtonsFromEArray(addPropInfo.ID,&addPropInfo.whichValue,addPropertyValueChange,g_propertyDefList.list[i]->texts);
-
-                        editorUIEndSubWidgets(addPropInfo.ID);
-                    }
-
+                    addPropertyCreateNormalWidgets();
 
                 editorUIEndSubWidgets(addPropInfo.ID);
                 editorUIAddSubWidgets(addPropInfo.ID,addPropertyOtherProperty,0,0);
@@ -1852,18 +1994,151 @@ void addPropertyCreateMenu(MenuEntry * me,ClickInfo * ci) {
         addDestroyableProperties();
 
         editorUIAddButtonRow(addPropInfo.ID,NULL,"Ok",addPropertyToTrackers,"Add Another",addPropertyToTrackers,"Cancel",addPropertyDestroyWindow,NULL);
+}
+
+void addPropertyCreateMenu(MenuEntry * me,ClickInfo * ci) {
+    static int temp=1;
+    char ** list=0;
+    int i=0;
+    edit_state.addProperty = 0;
+    if (addPropInfo.ID)
+        return;
+    if (sel_count==0)
+        return;
+    editWaitingForServer(1, 0);
+    ZeroStruct(&addPropInfo);
+    for (i=0;i<eaSize(&g_propertyDefList.list);i++)
+        eaPush(&list,g_propertyDefList.list[i]->name);
+    addPropertyCreateMenuBuildWindow(list);
     eaDestroy(&list);
 }
 
 /****************************************************************************************************/
 
+static char addProperty2Prompt(char *buffer,char *buffer2)
+{
+    PropertyDialogParams ptd;
+    char * cursor;
+    char another;
+    extern LRESULT CALLBACK editPropertyDialog(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp);
+    sprintf(buffer, "NewPropertyName");
+    sprintf(buffer2, "0");
+    ptd.property = buffer;
+    ptd.value = buffer2;
+    another = DialogBoxParam(glob_hinstance, MAKEINTRESOURCE(IDD_NEWPROP), hwnd, editPropertyDialog, (LPARAM)&ptd);
+    inpClear();
+    // check for cancel
+    if (another == 2)
+        return another;
+
+    cursor = strrchr(buffer, '\\');
+    if(cursor){
+        cursor++;
+        strcpy(buffer, cursor);
+    }
+    return another;
+}
+
+static int addProperty2VerifyExisting(char *buffer)
+{
+    StashElement element;
+    int i;
+    int count=0;
+
+    for (i=0;i<sel_count;i++)
+    {
+        GroupDef * def;
+        // Make sure the properties table exists.
+        def = sel_list[i].def_tracker->def;
+        if(!def->properties){
+            def->properties = stashTableCreateWithStringKeys(16,  StashDeepCopyKeys);
+            def->has_properties = 1;
+        }
+        // Try to find the property with the new name
+        stashFindElement(def->properties, buffer, &element);
+        if(element)
+            count++;
+    }
+    if (count>0)
+    {
+        char msg[256];
+        if (sel_count>1)
+            sprintf(msg,"%d group%s already have this property.  If you continue it will erase the old value from %s, are you sure you want to do this?",count,(count>1)?"s":"",(count>1)?"that group":"those groups");
+        else
+            sprintf(msg,"This group already has this property.  If you continue it will erase the old value, are you sure you want to do this?");
+        if (!winMsgYesNo(msg))
+            return 0;
+        for (i=0;i<sel_count;i++)
+        {
+            PropertyEnt * prop;
+            DefTracker * tracker=sel_list[i].def_tracker;
+            stashFindPointer( tracker->def->properties,buffer, &prop );
+            if (prop==NULL)
+                continue;
+            stashRemovePointer(tracker->def->properties,buffer, NULL);
+            destroyPropertyEnt(prop);
+        }
+    }
+    return 1;
+}
+
+static void addProperty2CreateProperties(char *buffer,char *buffer2,PropertyEnt ***props)
+{
+    int i;
+
+    for (i=0;i<sel_count;i++)
+    {
+        GroupDef *def;
+        PropertyEnt *prop;
+
+        def = sel_list[i].def_tracker->def;
+        prop = createPropertyEnt();
+        strcpy(prop->name_str, buffer);    // Give the property the user given name
+        estrPrintCharString(&prop->value_str, buffer2);    // Give the property a default value of "0".
+
+        stashAddPointer(def->properties, prop->name_str, prop, false);
+
+        if (stricmp(prop->name_str, "VisTray")==0 ||
+            stricmp(prop->name_str, "VisOutside")==0 ||
+            stricmp(prop->name_str, "VisOutsideOnly")==0 ||
+            stricmp(prop->name_str, "SoundOccluder")==0 ||
+            stricmp(prop->name_str, "DoWelding")==0)
+            groupSetTrickFlags(def);
+
+        eaPush(props,prop);
+    }
+    propertyUpdateTrackers();
+}
+
+static void addProperty2RemoveCreatedProperties(PropertyEnt **props,char *buffer)
+{
+    int i;
+
+    for (i=0;i<sel_count;i++)
+    {
+        int j;
+        for (j=0;j<eaSize(&props);j++)
+        {
+            DefTracker * tracker=sel_list[i].def_tracker;
+            PropertyEnt * prop;
+            stashFindPointer(tracker->def->properties,props[j]->value_str, &prop);
+            if (prop==NULL)
+                continue;    //this means is was already deleted from a previous tracker with the same def
+            stashRemovePointer(tracker->def->properties,buffer, NULL);
+            destroyPropertyEnt(prop);
+            if (stashGetValidElementCount(tracker->def->properties)==0) {
+                stashTableDestroy(tracker->def->properties);
+                tracker->def->properties=0;
+                tracker->def->has_properties=0;
+            }
+        }
+    }
+}
+
 void addProperty2(MenuEntry * me,ClickInfo * ci){
-    GroupDef* def;
-    PropertyEnt* prop;
     char buffer[1024];
     char buffer2[1024];
     char another = true;
-    int i;
     PropertyEnt ** props=0;
 
     edit_state.addProperty = 0;
@@ -1882,111 +2157,148 @@ void addProperty2(MenuEntry * me,ClickInfo * ci){
 
     while (another) {
         // Prompt the user for the new property name.
-        {
-            PropertyDialogParams ptd;
-            char * cursor;
-            extern LRESULT CALLBACK editPropertyDialog(HWND hDlg, UINT msg, WPARAM wp, LPARAM lp);
-            sprintf(buffer, "NewPropertyName");
-            sprintf(buffer2, "0");
-            ptd.property = buffer;
-            ptd.value = buffer2;
-            another = DialogBoxParam(glob_hinstance, MAKEINTRESOURCE(IDD_NEWPROP), hwnd, editPropertyDialog, (LPARAM)&ptd);
-            inpClear();
-            // check for cancel
-            if (another == 2) {
-                break;
-            }
-
-            cursor = strrchr(buffer, '\\');
-            if(cursor){
-                cursor++;
-                strcpy(buffer, cursor);
-            }
-        }
+        another = addProperty2Prompt(buffer,buffer2);
+        if (another == 2)
+            break;
 
         // Verify that the property does not already exist.
-        {
-            StashElement element;
-            int count=0;
-            for (i=0;i<sel_count;i++)
-            {
-                // Make sure the properties table exists.
-                def = sel_list[i].def_tracker->def;
-                if(!def->properties){
-                    def->properties = stashTableCreateWithStringKeys(16,  StashDeepCopyKeys);
-                    def->has_properties = 1;
-                }
-                // Try to find the property with the new name
-                stashFindElement(def->properties, buffer, &element);
-                if(element)
-                    count++;
-            }
-            if (count>0)
-            {
-                char msg[256];
-                if (sel_count>1)
-                    sprintf(msg,"%d group%s already have this property.  If you continue it will erase the old value from %s, are you sure you want to do this?",count,(count>1)?"s":"",(count>1)?"that group":"those groups");
-                else
-                    sprintf(msg,"This group already has this property.  If you continue it will erase the old value, are you sure you want to do this?");
-                if (!winMsgYesNo(msg))
-                    return;
-                for (i=0;i<sel_count;i++)
-                {
-                    DefTracker * tracker=sel_list[i].def_tracker;
-                    stashFindPointer( tracker->def->properties,buffer, &prop );
-                    if (prop==NULL)
-                        continue;
-                    stashRemovePointer(tracker->def->properties,buffer, NULL);
-                    destroyPropertyEnt(prop);
-                }
-            }
-        }
+        if (!addProperty2VerifyExisting(buffer))
+            return;
+        addProperty2CreateProperties(buffer,buffer2,&props);
+    }
+    addProperty2RemoveCreatedProperties(props,buffer);
+}
+
+static void propertiesMenuRemoveSelectedProperty(char *propertyName)
+{
+    int i;
+    PropertyEnt * prop;
+    DefTracker * tracker;
+    char *buf = NULL;
+    char *propertyValue = NULL;
+
+    estrPrintf(&buf, "Remove the property '%s' from %d groups?", propertyName, sel_count);
+    if (winMsgYesNo(buf))
+    {
         for (i=0;i<sel_count;i++)
         {
-            def = sel_list[i].def_tracker->def;
-            prop = createPropertyEnt();
-            strcpy(prop->name_str, buffer);    // Give the property the user given name
-            estrPrintCharString(&prop->value_str, buffer2);    // Give the property a default value of "0".
-
-            stashAddPointer(def->properties, prop->name_str, prop, false);
-
-            if (stricmp(prop->name_str, "VisTray")==0 ||
-                stricmp(prop->name_str, "VisOutside")==0 ||
-                stricmp(prop->name_str, "VisOutsideOnly")==0 ||
-                stricmp(prop->name_str, "SoundOccluder")==0 ||
-                stricmp(prop->name_str, "DoWelding")==0)
-                groupSetTrickFlags(def);
-
-            eaPush(&props,prop);
+            tracker = sel_list[i].def_tracker;
+            stashFindPointer(tracker->def->properties, propertyName, &prop);
+            if (prop == NULL)
+                continue;    //this means is was already deleted from a previous tracker with the same def
+            estrPrintEString(&propertyValue, prop->value_str);
+            stashRemovePointer(tracker->def->properties, propertyName, NULL);
+            destroyPropertyEnt(prop);
+            if (stashGetValidElementCount(tracker->def->properties)==0)
+                tracker->def->has_properties = 0;
         }
         propertyUpdateTrackers();
-    }
-    for (i=0;i<sel_count;i++)
-    {
-        int j;
-        for (j=0;j<eaSize(&props);j++)
+        for (i=0;i<sel_count;i++)
         {
-            DefTracker * tracker=sel_list[i].def_tracker;
-            stashFindPointer( tracker->def->properties,props[j]->value_str, &prop );
-            if (prop==NULL)
-                continue;    //this means is was already deleted from a previous tracker with the same def
-            stashRemovePointer(tracker->def->properties,buffer, NULL);
-            destroyPropertyEnt(prop);
-            if (stashGetValidElementCount(tracker->def->properties)==0) {
-                stashTableDestroy(tracker->def->properties);
-                tracker->def->properties=0;
-                tracker->def->has_properties=0;
-            }
+            GroupDef * def = sel_list[i].def_tracker->def;
+            prop = createPropertyEnt();
+            strcpy(prop->name_str, propertyName);    // Give the property the user given name
+            estrPrintCharString(&prop->value_str, propertyValue);    // Give the property a default value of "0".
+            stashAddPointer(def->properties, prop->name_str, prop, false);
         }
     }
+}
+
+static void propertiesMenuRemoveProperty(MenuEntry * me)
+{
+    char propertyName[TEXT_DIALOG_MAX_STRLEN];
+
+    strncpy(propertyName, me->name, TEXT_DIALOG_MAX_STRLEN - 1);
+    propertyName[TEXT_DIALOG_MAX_STRLEN - 1] = '\0';
+    if (strchr(propertyName,'^')!=0)
+        *strchr(propertyName,'^')=0;
+    propertiesMenuRemoveSelectedProperty(propertyName);
+}
+
+static void propertiesMenuEditSharedFrom(DefTracker *tracker,char *propertyName,PropertyEnt *prop)
+{
+    char msg[512];
+
+    sprintf(msg,    "You cannot change the SharedFrom property, you can only remove it.\n"
+                    "If you do, the layer will be saved to the current map's directory instead of:\n"
+                    "%s\n"
+                    "\n"
+                    "!! THIS CANNOT BE UNDONE !!\n"
+                    "Do you want to remove the SharedFrom property?",
+                    prop->value_str);
+    if(winMsgYesNo(msg))
+    {
+        stashRemovePointer(tracker->def->properties, propertyName, NULL);
+        destroyPropertyEnt(prop);
+        if(!stashGetValidElementCount(tracker->def->properties))
+            tracker->def->has_properties = 0;
+        propertyUpdateTrackers();
+    }
+}
+
+static void propertiesMenuEditApplyValue(char *propertyName,char *value,char *oldbuf)
+{
+    int i;
+
+    for (i=0;i<sel_count;i++)
+    {
+        DefTracker *tracker=sel_list[i].def_tracker;
+        PropertyEnt *prop;
+        stashFindPointer(tracker->def->properties, propertyName, &prop);
+        assert(prop);
+        estrPrintEString(&prop->value_str, value);
+        estrRemoveDoubleQuotes(&prop->value_str);
+    }
+    propertyUpdateTrackers();
+
+    // ARM NOTE: What does this do?  I don't get it...
+    for (i=0;i<sel_count;i++)
+    {
+        DefTracker *tracker=sel_list[i].def_tracker;
+        PropertyEnt *prop;
+        stashFindPointer(tracker->def->properties, propertyName, &prop);
+        assert(prop);
+        estrPrintEString(&prop->value_str, oldbuf);
+    }
+}
+
+static void propertiesMenuEditProperty(MenuEntry * me)
+{
+    const char *caretPtr;
+    PropertyEnt * prop;
+    DefTracker * tracker;
+    char propertyName[TEXT_DIALOG_MAX_STRLEN];
+    char *buf = NULL;
+    char *oldbuf = NULL;
+    strncpy(propertyName, me->name, TEXT_DIALOG_MAX_STRLEN - 1);
+    propertyName[TEXT_DIALOG_MAX_STRLEN - 1] = '\0';
+    if (strstr(me->name, "^"))
+        estrPrintCharString(&buf, strstr(me->name, "^") + 2);
+    if (caretPtr = strstr(buf, "^"))
+        estrRemove(&buf, caretPtr - buf, estrLength(&buf) - (caretPtr - buf));
+    if (strchr(propertyName,'^')!=0)
+        *strchr(propertyName,'^')=0;
+
+    tracker=sel_list[0].def_tracker;
+    assert(stashFindPointer(tracker->def->properties, propertyName, &prop) && prop);
+
+    if(stricmp(propertyName, "SharedFrom") == 0)
+    {
+        propertiesMenuEditSharedFrom(tracker,propertyName,prop);
+        return;
+    }
+
+    if (!winGetEString("Enter new value.", &buf) || !buf[0])
+        return;
+
+    estrPrintEString(&oldbuf, prop->value_str);
+
+    propertiesMenuEditApplyValue(propertyName,buf,oldbuf);
 }
 
 void propertiesMenuCallback(MenuEntry * me,ClickInfo * ci)
 {
     int column=ci->x/me->theMenu->lv->columnWidth;
-    char *buf = NULL;
-    char *oldbuf = NULL;
-    int i;
     if (column<3)
     {
 
@@ -1994,138 +2306,21 @@ void propertiesMenuCallback(MenuEntry * me,ClickInfo * ci)
     else
     if (column<6)
     {
-        const char *caretPtr;
-        PropertyEnt * prop;
-        DefTracker * tracker;
-        char propertyName[TEXT_DIALOG_MAX_STRLEN];
-        strncpy(propertyName, me->name, TEXT_DIALOG_MAX_STRLEN - 1);
-        propertyName[TEXT_DIALOG_MAX_STRLEN - 1] = '\0';
-        if (strstr(me->name, "^"))
-            estrPrintCharString(&buf, strstr(me->name, "^") + 2);
-        if (caretPtr = strstr(buf, "^"))
-            estrRemove(&buf, caretPtr - buf, estrLength(&buf) - (caretPtr - buf));
-        if (strchr(propertyName,'^')!=0)
-            *strchr(propertyName,'^')=0;
-
-        tracker=sel_list[0].def_tracker;
-        assert(stashFindPointer(tracker->def->properties, propertyName, &prop) && prop);
-
-        if(stricmp(propertyName, "SharedFrom") == 0)
-        {
-            char msg[512];
-            sprintf(msg,    "You cannot change the SharedFrom property, you can only remove it.\n"
-                            "If you do, the layer will be saved to the current map's directory instead of:\n"
-                            "%s\n"
-                            "\n"
-                            "!! THIS CANNOT BE UNDONE !!\n"
-                            "Do you want to remove the SharedFrom property?",
-                            prop->value_str);
-            if(winMsgYesNo(msg))
-            {
-                stashRemovePointer(tracker->def->properties, propertyName, NULL);
-                destroyPropertyEnt(prop);
-                if(!stashGetValidElementCount(tracker->def->properties))
-                    tracker->def->has_properties = 0;
-                propertyUpdateTrackers();
-            }
-            return;
-        }
-
-        if (!winGetEString("Enter new value.", &buf) || !buf[0])
-            return;
-
-        estrPrintEString(&oldbuf, prop->value_str);
-
-        for (i=0;i<sel_count;i++)
-        {
-            tracker=sel_list[i].def_tracker;
-            stashFindPointer(tracker->def->properties, propertyName, &prop);
-            assert(prop);
-            estrPrintEString(&prop->value_str, buf);
-            estrRemoveDoubleQuotes(&prop->value_str);
-        }
-        propertyUpdateTrackers();
-        
-        // ARM NOTE: What does this do?  I don't get it...
-        for (i=0;i<sel_count;i++)
-        {
-            tracker=sel_list[i].def_tracker;
-            stashFindPointer(tracker->def->properties, propertyName, &prop);
-            assert(prop);
-            estrPrintEString(&prop->value_str, oldbuf);
-        }
+        propertiesMenuEditProperty(me);
     }
     else
     if (column>=6)
     {
-        PropertyEnt * prop;
-        DefTracker * tracker;
-        char propertyName[TEXT_DIALOG_MAX_STRLEN];
-        char *propertyValue = NULL;
-        strncpy(propertyName, me->name, TEXT_DIALOG_MAX_STRLEN - 1);
-        propertyName[TEXT_DIALOG_MAX_STRLEN - 1] = '\0';
-        if (strchr(propertyName,'^')!=0)
-            *strchr(propertyName,'^')=0;
-        estrPrintf(&buf, "Remove the property '%s' from %d groups?", propertyName, sel_count);
-        if (winMsgYesNo(buf))
-        {
-            for (i=0;i<sel_count;i++)
-            {
-                tracker = sel_list[i].def_tracker;
-                stashFindPointer(tracker->def->properties, propertyName, &prop);
-                if (prop == NULL)
-                    continue;    //this means is was already deleted from a previous tracker with the same def
-                estrPrintEString(&propertyValue, prop->value_str);
-                stashRemovePointer(tracker->def->properties, propertyName, NULL);
-                destroyPropertyEnt(prop);
-                if (stashGetValidElementCount(tracker->def->properties)==0)
-                    tracker->def->has_properties = 0;
-            }
-            propertyUpdateTrackers();
-            for (i=0;i<sel_count;i++)
-            {
-                GroupDef * def = sel_list[i].def_tracker->def;
-                prop = createPropertyEnt();
-                strcpy(prop->name_str, propertyName);    // Give the property the user given name
-                estrPrintCharString(&prop->value_str, propertyValue);    // Give the property a default value of "0".
-                stashAddPointer(def->properties, prop->name_str, prop, false);
-            }
-        }
+        propertiesMenuRemoveProperty(me);
     }
 }
 
-void propertiesMenuCreate()
+static int propertiesMenuCollectCommon(char propertiesListFinal[64][TEXT_DIALOG_MAX_STRLEN])
 {
     int i;
     StashTable properties;
-    char propertiesListFinal[64][TEXT_DIALOG_MAX_STRLEN];
     int propertiesListIndexFinal;
-    static int x,y,width,height;
-    static int sticky=1;        //keep the menu around for a tick or two even if sel_count goes to zero
-//    PERFINFO_AUTO_START("propertiesCreateMenu",1);
-    if (sel_count==0)
-    {
-        if (propertiesMenu!=NULL && sticky<=0)
-        {
-            x=propertiesMenu->lv->x;
-            y=propertiesMenu->lv->y;
-            width=propertiesMenu->lv->width;
-            height=propertiesMenu->lv->height;
-            destroyMenu(propertiesMenu);
-            propertiesMenu=NULL;
-        }
-        sticky--;
-//        PERFINFO_AUTO_STOP();
-        return;
-    }
-    sticky=1;
-    if (height==0)
-    {
-        x=15;
-        y=-45;
-        width=430;
-        height=100;
-    }
+
     propertiesListIndex=0;
     propertiesListIndexFinal=0;
     properties=sel_list[0].def_tracker->def->properties;
@@ -2157,20 +2352,12 @@ void propertiesMenuCreate()
         if (propertiesListIndexFinal==0)
             break;
     }
+    return propertiesListIndexFinal;
+}
 
-    if (updatePropertiesMenu)
-    {
-        if (propertiesMenu != NULL)
-        {
-            x = propertiesMenu->lv->x;
-            y = propertiesMenu->lv->y;
-            width = propertiesMenu->lv->width;
-            height = propertiesMenu->lv->height;
-            destroyMenu(propertiesMenu);
-            propertiesMenu = NULL;
-        }
-        updatePropertiesMenu = false;
-    }
+static void propertiesMenuCreateBuildMenu(int x,int y,int width,int height,char propertiesListFinal[64][TEXT_DIALOG_MAX_STRLEN],int propertiesListIndexFinal)
+{
+    int i;
 
     if (propertiesMenu==NULL && sel_count>0)
     {
@@ -2195,41 +2382,68 @@ void propertiesMenuCreate()
             smallBuffer[99] = '\0';
             me=addEntryToMenu(propertiesMenu,smallBuffer,propertiesMenuCallback,NULL);
             estrPrintf(&me->name, "%s^6Remove", propertiesListFinal[i]);
-        }    
+        }
         propertiesMenu->root->opened=1;
         propertiesMenu->lv->colorColumns=1;
         propertiesMenu->lv->columnWidth=60;
     }
+}
+
+void propertiesMenuCreate()
+{
+    char propertiesListFinal[64][TEXT_DIALOG_MAX_STRLEN];
+    int propertiesListIndexFinal;
+    static int x,y,width,height;
+    static int sticky=1;        //keep the menu around for a tick or two even if sel_count goes to zero
+//    PERFINFO_AUTO_START("propertiesCreateMenu",1);
+    if (sel_count==0)
+    {
+        if (propertiesMenu!=NULL && sticky<=0)
+        {
+            x=propertiesMenu->lv->x;
+            y=propertiesMenu->lv->y;
+            width=propertiesMenu->lv->width;
+            height=propertiesMenu->lv->height;
+            destroyMenu(propertiesMenu);
+            propertiesMenu=NULL;
+        }
+        sticky--;
+//        PERFINFO_AUTO_STOP();
+        return;
+    }
+    sticky=1;
+    if (height==0)
+    {
+        x=15;
+        y=-45;
+        width=430;
+        height=100;
+    }
+    propertiesListIndexFinal=propertiesMenuCollectCommon(propertiesListFinal);
+
+    if (updatePropertiesMenu)
+    {
+        if (propertiesMenu != NULL)
+        {
+            x = propertiesMenu->lv->x;
+            y = propertiesMenu->lv->y;
+            width = propertiesMenu->lv->width;
+            height = propertiesMenu->lv->height;
+            destroyMenu(propertiesMenu);
+            propertiesMenu = NULL;
+        }
+        updatePropertiesMenu = false;
+    }
+
+    propertiesMenuCreateBuildMenu(x,y,width,height,propertiesListFinal,propertiesListIndexFinal);
     estrPrintf(&propertiesMenu->root->name, "Properties (%d group%s)", sel_count, (sel_count > 1 ? "s" : ""));
 //    PERFINFO_AUTO_STOP();
 }
 
-void selAdd(DefTracker *tracker,int group_id,int toggle, int selectionSrc)
+static int selAddHandleLayer(DefTracker *tracker)
 {
-    int        i,cidx=-1;
-    U32        color;
+    int i;
     int selectLayer = 0;
-    static U32        colors[] = {
-        0x80ff00, 0x8000ff, 0x0080ff,
-        0xff8000, 0xff0080, 0x00ff80,
-        0xffff80, 0xff80ff, 0x80ffff,
-        0xff0000, 0x00ff00, 0x0000ff,
-        0xffff00, 0xff00ff, 0x00ffff,};
-    U8        used[ARRAY_SIZE(colors)];
- 
-    if (tracker) {
-        DefTracker * temp=tracker;
-        while (temp) {
-            if (temp->frozen) return;
-            temp=temp->parent;
-        }
-    }
-
-    updatePropertiesMenu = true;
-
-    //go ahead and set it as unselected, if it is supposed to be selected it
-    //will get reflagged later
-    tracker->selected=0;
 
     /////Layers : If you are selecting a Layer, unselect everything else first.  
     if( tracker && tracker->def && groupDefFindPropertyValue( tracker->def, "Layer") ) 
@@ -2264,7 +2478,7 @@ void selAdd(DefTracker *tracker,int group_id,int toggle, int selectionSrc)
                 editRefSelect(t,0);
             }
         }
-    
+
     }
     //If you are selecting anything else, and you have a layer selected, unselect it.
     else 
@@ -2283,75 +2497,12 @@ void selAdd(DefTracker *tracker,int group_id,int toggle, int selectionSrc)
             }
         }
     }
+    return selectLayer;
+}
 
-    //Set this layer as the active layer
-    //ONly when you explicitly select this in the editor should you make this your active layer
-    if( selectionSrc == EDITOR_LIST && selectLayer )      
-    {
-        edit_state.setactivelayer = 1;
-        //editCmdSetActiveLayer();
-    }
-
-    // End Layers         ///////////////////////////////////////////////////////
-
-    edit_stats.poly_recount = 1;
-    if (toggle != 2 && tracker && tracker->edit)
-    {
-        trackerCloseEdit(tracker);
-        unSelect(1);
-    }
-    memset(used,0,sizeof(used));
-    for(i=0;i<sel_count;i++)
-    {
-        if (tracker == sel_list[i].def_tracker)
-        {
-            if (toggle)
-            {
-                sel_list[i].id = 0;
-                tracker->inherit = 0;
-                memmove(sel_list+i,sel_list+i+1,(sel_count-i) * sizeof(sel_list[0]));
-                sel_count--;
-                editRefSelect(tracker,0);
-            }
-            return;
-        }
-        else
-        {
-            // Check if this is a parent of tracker somewhere.
-            DefTracker* parent = tracker->parent;
-            
-            for(;parent;parent = parent->parent)
-            {
-                if(parent == sel_list[i].def_tracker)
-                {
-                    sel_list[i].id = 0;
-                    parent->inherit = 0;
-                    memmove(sel_list+i,sel_list+i+1,(sel_count-i) * sizeof(sel_list[0]));
-                    sel_count--;
-                    editRefSelect(parent,0);
-                    break;
-                }
-            }
-            
-            if(parent)
-                break;
-        }
-        if (tracker->parent && tracker->parent == sel_list[i].def_tracker->parent)
-            cidx = sel_list[i].color_idx;
-        if (sel_list[i].def_tracker->parent)
-            used[sel_list[i].color_idx] = 1;
-    }
-    if (cidx < 0)
-    {
-        for(i=0;i<ARRAY_SIZE(colors);i++)
-        {
-            if (!used[i])
-                break;
-        }
-        if (i >= ARRAY_SIZE(colors))
-            i = randInt(ARRAY_SIZE(colors));
-        cidx = i;
-    }
+static void selAddAppendSelection(DefTracker *tracker,int group_id,int cidx,U32 *colors)
+{
+    U32 color;
 
     if (sel_count >= ARRAY_SIZE(sel_list))
         return;
@@ -2375,6 +2526,116 @@ void selAdd(DefTracker *tracker,int group_id,int toggle, int selectionSrc)
     if (sel_list[sel_count-1].pick_pivot)
         color = 0xff0000;
     editRefSelect(tracker,color);
+}
+
+static int selAddFindColorIndex(DefTracker *tracker,int toggle,int *cidx,U8 *used,int color_count)
+{
+    int i;
+
+    *cidx = -1;
+    memset(used,0,color_count * sizeof(used[0]));
+    for(i=0;i<sel_count;i++)
+    {
+        if (tracker == sel_list[i].def_tracker)
+        {
+            if (toggle)
+            {
+                sel_list[i].id = 0;
+                tracker->inherit = 0;
+                memmove(sel_list+i,sel_list+i+1,(sel_count-i) * sizeof(sel_list[0]));
+                sel_count--;
+                editRefSelect(tracker,0);
+            }
+            return 0;
+        }
+        else
+        {
+            // Check if this is a parent of tracker somewhere.
+            DefTracker* parent = tracker->parent;
+            
+            for(;parent;parent = parent->parent)
+            {
+                if(parent == sel_list[i].def_tracker)
+                {
+                    sel_list[i].id = 0;
+                    parent->inherit = 0;
+                    memmove(sel_list+i,sel_list+i+1,(sel_count-i) * sizeof(sel_list[0]));
+                    sel_count--;
+                    editRefSelect(parent,0);
+                    break;
+                }
+            }
+            
+            if(parent)
+                break;
+        }
+        if (tracker->parent && tracker->parent == sel_list[i].def_tracker->parent)
+            *cidx = sel_list[i].color_idx;
+        if (sel_list[i].def_tracker->parent)
+            used[sel_list[i].color_idx] = 1;
+    }
+    if (*cidx < 0)
+    {
+        for(i=0;i<color_count;i++)
+        {
+            if (!used[i])
+                break;
+        }
+        if (i >= color_count)
+            i = randInt(color_count);
+        *cidx = i;
+    }
+    return 1;
+}
+
+void selAdd(DefTracker *tracker,int group_id,int toggle, int selectionSrc)
+{
+    int        cidx;
+    int selectLayer;
+    static U32        colors[] = {
+        0x80ff00, 0x8000ff, 0x0080ff,
+        0xff8000, 0xff0080, 0x00ff80,
+        0xffff80, 0xff80ff, 0x80ffff,
+        0xff0000, 0x00ff00, 0x0000ff,
+        0xffff00, 0xff00ff, 0x00ffff,};
+    U8        used[ARRAY_SIZE(colors)];
+
+    if (tracker) {
+        DefTracker * temp=tracker;
+        while (temp) {
+            if (temp->frozen) return;
+            temp=temp->parent;
+        }
+    }
+
+    updatePropertiesMenu = true;
+
+    //go ahead and set it as unselected, if it is supposed to be selected it
+    //will get reflagged later
+    tracker->selected=0;
+
+    selectLayer = selAddHandleLayer(tracker);
+
+    //Set this layer as the active layer
+    //ONly when you explicitly select this in the editor should you make this your active layer
+    if( selectionSrc == EDITOR_LIST && selectLayer )
+    {
+        edit_state.setactivelayer = 1;
+        //editCmdSetActiveLayer();
+    }
+
+    // End Layers         ///////////////////////////////////////////////////////
+
+    edit_stats.poly_recount = 1;
+    if (toggle != 2 && tracker && tracker->edit)
+    {
+        trackerCloseEdit(tracker);
+        unSelect(1);
+    }
+    if (!selAddFindColorIndex(tracker,toggle,&cidx,used,ARRAY_SIZE(colors)))
+        return;
+
+    selAddAppendSelection(tracker,group_id,cidx,colors);
 
 }
 

@@ -202,32 +202,9 @@ void destroyableObjectSetObject() {
     edit_state.destroyableObject=sel_list[0].def_tracker;
 }
 
-void editProcess()
+// File-domain commands: load/new/save/export/autosave/scene/loadscreen.
+static void editProcessFileCommands(void)
 {
-    DefTracker *tracker;
-    Vec3    start,end;
-    int        lost_focus;
-    int        old_cache_disabled;
-    static ScrollBar * scrollBar;
-    static Menu * textureMenu;
-
-    if(entDebugMenuVisible())
-        edit_state.sel = 0;
-
-    if (!editHousekeeping(&lost_focus))
-    {
-        return;
-    }
-
-    PERFINFO_AUTO_START("mouseOverSel", 1);
-
-    old_cache_disabled = gridSetCacheDisabled(1);
-    tracker = mouseOverSel(start,end,lost_focus);
-    gridSetCacheDisabled(old_cache_disabled);
-
-    PERFINFO_AUTO_STOP_START("file", 1);
-
-    // file
     if (edit_state.load || edit_state.import)
         editLoad(winGetFileName("*.txt",map_loadsave_name,0),edit_state.import);
     if (edit_state.editstate_new)
@@ -251,9 +228,11 @@ void editProcess()
     /*MW removed because nobody uses it, and I think it's broken
     if (edit_state.checkin)
     editCmdCheckin();*/
+}
 
-    PERFINFO_AUTO_STOP_START("copy/paste", 1);
-
+// Clipboard/property and profiler commands.
+static void editProcessCopyPasteCommands(void)
+{
     if (edit_state.copyProperties)
         editCmdCopyProperties();
     if (edit_state.pasteProperties)
@@ -261,10 +240,11 @@ void editProcess()
 
     if (edit_state.profiler)
         editProfiler();
+}
 
-    PERFINFO_AUTO_STOP_START("group", 1);
-
-    // group
+// Group/layer/name commands.
+static void editProcessGroupCommands(void)
+{
     if (edit_state.ungroup)
         editCmdUngroup();
     if (edit_state.group)
@@ -298,17 +278,11 @@ void editProcess()
     if (edit_state.toggleMenu) {
         edit_state.useOldMenu=0;
     }
+}
 
-    PERFINFO_AUTO_STOP_START("hideMenu", 1);
-
-    if (edit_state.hideMenu) {
-        hideAllELV();
-        edit_state.hideMenu=0;
-    }
-
-    PERFINFO_AUTO_STOP_START("group->LOD", 1);
-
-    // group->LOD
+// LOD and fog/collision-visibility commands.
+static void editProcessLodCommands(void)
+{
     if (edit_state.lodscale || edit_state.lodfar || edit_state.lodfarfade)
         editCmdSetLod();
     if (edit_state.loddisable)
@@ -324,10 +298,11 @@ void editProcess()
         editCmdNoFogClip();
     if (edit_state.nocoll)
         editCmdNoColl();
+}
 
-    PERFINFO_AUTO_STOP_START("beacons", 1);
-
-    // adjust->beacons
+// Beacon placement/visualisation commands.
+static void editProcessBeaconCommands(void)
+{
     if (edit_state.beaconName)
         editCmdBeaconName();
     if (edit_state.beaconSize)
@@ -338,9 +313,11 @@ void editProcess()
         editCmdShowBeaconPath(1);
     else if (edit_state.showBeaconPathContinue)
         editCmdShowBeaconPath(0);
+}
 
-    PERFINFO_AUTO_STOP_START("adjust/light", 1);
-
+// Lighting commands (ambient/colour/brightness + light size).
+static void editProcessLightCommands(void)
+{
     if (edit_state.unsetambient)
         editCmdUnsetAmbient();
 
@@ -361,14 +338,18 @@ void editProcess()
 
     if (edit_state.lightsize)
         editCmdLightSize();
+}
 
-    PERFINFO_AUTO_STOP_START("adjust/cubemap", 1);
-
+// Cubemap adjustment command.
+static void editProcessCubemapCommands(void)
+{
     if (edit_state.adjustCubemap)
         editCmdAdjustCubemap();
+}
 
-    PERFINFO_AUTO_STOP_START("adjust/fog", 1);
-
+// Fog commands.
+static void editProcessFogCommands(void)
+{
     // adjust->fog
     if (edit_state.fogcolor1 || edit_state.fogcolor2)
         editCmdFogColor();
@@ -378,9 +359,11 @@ void editProcess()
         getFogSize();
     if (edit_state.fogspeed)
         getFogSpeed();
+}
 
-    PERFINFO_AUTO_STOP_START("adjust/tinttex", 1);
-
+// Texture tint/replace/remove commands.
+static void editProcessTintTexCommands(void)
+{
     // adjust->tinttex
     if (edit_state.tintcolor1 || edit_state.tintcolor2)
         editCmdTintColor();
@@ -388,83 +371,11 @@ void editProcess()
         editCmdRemoveTex();
     if (edit_state.replacetex1 || edit_state.replacetex2)
         editCmdReplaceTex();
+}
 
-    {
-        static int x=400;
-        static int y=50;
-        static int width=400;
-        static int height=400;
-        static int scrolled=0;
-        //we don't want to bring up the texture menu unless you have a single non-library piece selected,
-        //and we prevent them from cleverly switching what object is selected by checking the currently
-        //selected object against the textureSwapTracker and making sure they are the same
-        if (edit_state.textureSwap) {
-            if ((sel_count!=1 && textureMenu!=NULL) || !isNonLibSingleSelect(0,0) || (textureMenu!=NULL && sel_list[0].def_tracker!=edit_state.textureSwapTracker)) {
-                editCancelTextureSwap(0,0);
-            } else {
-                if (textureMenu==NULL) {
-                    textureMenu=newMenu(x,y,width,height,"Pick a texture to swap");
-                    edit_state.textureSwapTracker=sel_list[0].def_tracker;
-                    edit_state.textureSwapModTime=sel_list[0].def_tracker->def_mod_time;
-                    addEntryToMenu(textureMenu,"Done",editCancelTextureSwap,NULL);
-                    if (edit_state.textureSwapRandom)
-                        addEntryToMenu(textureMenu,"New Swaps are Random (click here to change)",editRandomizeTextureSwap,0);
-                    else
-                        addEntryToMenu(textureMenu,"New Swaps are Not Random (click here to change)",editRandomizeTextureSwap,0);
-                    if (edit_state.textureSwapRemove)
-                        addEntryToMenu(textureMenu,"Removing Swaps (click here to add swaps)",editRemoveTextureSwap,NULL);
-                    else
-                        addEntryToMenu(textureMenu,"Adding Swaps (click here to remove swaps)",editRemoveTextureSwap,NULL);
-                    addEntryToMenu(textureMenu," ",NULL,NULL);
-                    editCmdAddBasicTexturesToMenu(textureMenu,edit_state.textureSwapTracker);
-                    editCmdAddCompositeTexturesToMenu(textureMenu,edit_state.textureSwapTracker);
-                    //open up the menus for those lazy artists :-P
-                    {
-                        MenuEntry * me=textureMenu->root->child;
-                        while (me!=NULL) {
-                            if (strcmp(me->name,"Textures"))
-                                me->opened=1;
-                            if (strcmp(me->name,"Materials"))
-                                me->opened=1;
-                            me=me->sibling;
-                        }
-                        textureMenu->root->opened=1;
-                    }
-                    textureMenu->lv->amountScrolled=scrolled;
-                }
-            }
-        }
-        if ((!edit_state.textureSwap) || (!edit_state.textureSwapTracker || !edit_state.textureSwapTracker->def)) {
-            if (textureMenu && textureMenu->lv) {
-                x=textureMenu->lv->x;
-                y=textureMenu->lv->y;
-                width=textureMenu->lv->width;
-                height=textureMenu->lv->height;
-                scrolled=textureMenu->lv->amountScrolled;
-            }
-            if (textureMenu!=NULL)
-                destroyMenu(textureMenu);
-            textureMenu=0;
-            if (edit_state.textureSwapTracker==sel_list[0].def_tracker && sel_list[0].def_tracker &&
-                edit_state.textureSwapModTime<sel_list[0].def_tracker->def_mod_time) {
-                    if (edit_state.textureSwapReopen) {
-                        edit_state.textureSwapReopen=0;
-                        edit_state.textureSwap=1;
-                    } else {
-                        edit_state.textureSwapRemove=0;
-                        edit_state.textureSwapRandom=0;
-                        edit_state.textureSwapReopen=0;
-                    }
-                }
-        }
-    }
-
-    mapGeneratorUpkeep(&edit_state.mapGeneration);
-
-
-
-    PERFINFO_AUTO_STOP_START("adjust/sound", 1);
-
+// Sound commands (name/script/volume/ramp/size/find/exclude) plus box scale.
+static void editProcessSoundCommands(void)
+{
     // adjust->sound
     if (edit_state.soundname)
         editCmdSoundName();
@@ -483,20 +394,57 @@ void editProcess()
 
     if (edit_state.boxscale)
         editCmdBoxScale();
+}
 
-    PERFINFO_AUTO_STOP_START("adjust/properties", 1);
-
+// Property-adjustment commands.
+static void editProcessPropertyCommands(void)
+{
     // adjust->properties
     if (edit_state.addProperty)
     {
         extern void addPropertyCreateMenu(void *,void *);
         addPropertyCreateMenu(NULL,NULL);
     }
+}
 
-    PERFINFO_AUTO_STOP_START("select", 1);
+// Search for the next place a property is used.
+static void editProcessSearchCommands(void)
+{
+    //Search for places where this property is found
+    if (edit_state.findNextProperty)
+    {
+        editCmdFindNextProperty(edit_state.findNextProperty);
+        edit_state.findNextProperty = 0; //redundant?
+    }
+}
 
+// Clipboard/edit commands (cut/copy/paste/delete/undo/redo/reload).
+static void editProcessEditCommands(void)
+{
+    // edit
+    if (edit_state.copy || edit_state.cut)
+        editCmdCutCopy();
+    if (edit_state.paste)
+        editCmdPaste();
+    if (edit_state.del)
+        editCmdDelete();
+    if (edit_state.libdel)
+        editCmdLibDelete();
+    if (edit_state.undo)
+        editUndo();
+    if (edit_state.redo)
+        editRedo();
+
+    if (edit_state.reload) // MUST be after others (specifically Save and SaveLibs)
+        editLoad(game_state.world_name, 0);
+}
+
+// Selection/toolbar commands. `tracker` is the current mouse-over selection
+// tracker; `lost_focus_ptr` is passed through to the transform toolbar.
+static void editProcessSelectCommands(DefTracker *tracker, int *lost_focus_ptr)
+{
     if (game_state.transformToolbar)
-        editDrawTransformToolbar(&lost_focus);
+        editDrawTransformToolbar(lost_focus_ptr);
 
     // select
     if (edit_state.useObjectAxes && (edit_state.sel || (edit_state.objectAxesMovement && isDown(MS_LEFT))))
@@ -562,7 +510,13 @@ void editProcess()
     } else {
         edit_state.objectAxesUnspecified=1;
     }
+}
 
+// Burning-building and destroyable-object commands. Returns 0 when the frame
+// should abort early (the original code used a bare `return` from editProcess
+// while a destroyable object was being played but could not be applied).
+static int editProcessBurningDestroyableCommands(void)
+{
     if (edit_state.burningBuildingRepair) {
         edit_state.burningBuildingRepair=0;
         edit_state.burningBuildingRealRate=edit_state.burningBuildingSpeed;
@@ -590,10 +544,10 @@ void editProcess()
         if (edit_state.destroyableObjectPlay) {
             StashElement e;
             if (edit_state.destroyableObject==NULL)
-                return;
+                return 0;
             edit_state.destroyableObjectHealth+=edit_state.destroyableObjectSpeed/100.0;
             if (!stashFindElement(edit_state.destroyableObject->def->properties,"Health", &e))
-                return;
+                return 0;
             estrPrintf(&((PropertyEnt *)stashElementGetPointer(e))->value_str,
                         "%f%c", edit_state.destroyableObjectHealth, (edit_state.destroyableObjectSpeed<0) ? '-' : '+');
         }
@@ -611,36 +565,86 @@ void editProcess()
         edit_state.burningBuildingLastClockTick=0;
     }
 
-    PERFINFO_AUTO_STOP_START("search", 1);
+    return 1;
+}
 
-    //Search for places where this property is found
-    if (edit_state.findNextProperty)
-    {
-        editCmdFindNextProperty(edit_state.findNextProperty);
-        edit_state.findNextProperty = 0; //redundant?
+// Texture-swap menu management. Owns the persistent menu across frames and
+// recreates it when the underlying tracker's modification time changes.
+static void editProcessTextureSwapMenu(void)
+{
+    static Menu * textureMenu;
+    static int x=400;
+    static int y=50;
+    static int width=400;
+    static int height=400;
+    static int scrolled=0;
+    //we don't want to bring up the texture menu unless you have a single non-library piece selected,
+    //and we prevent them from cleverly switching what object is selected by checking the currently
+    //selected object against the textureSwapTracker and making sure they are the same
+    if (edit_state.textureSwap) {
+        if ((sel_count!=1 && textureMenu!=NULL) || !isNonLibSingleSelect(0,0) || (textureMenu!=NULL && sel_list[0].def_tracker!=edit_state.textureSwapTracker)) {
+            editCancelTextureSwap(0,0);
+        } else {
+            if (textureMenu==NULL) {
+                textureMenu=newMenu(x,y,width,height,"Pick a texture to swap");
+                edit_state.textureSwapTracker=sel_list[0].def_tracker;
+                edit_state.textureSwapModTime=sel_list[0].def_tracker->def_mod_time;
+                addEntryToMenu(textureMenu,"Done",editCancelTextureSwap,NULL);
+                if (edit_state.textureSwapRandom)
+                    addEntryToMenu(textureMenu,"New Swaps are Random (click here to change)",editRandomizeTextureSwap,0);
+                else
+                    addEntryToMenu(textureMenu,"New Swaps are Not Random (click here to change)",editRandomizeTextureSwap,0);
+                if (edit_state.textureSwapRemove)
+                    addEntryToMenu(textureMenu,"Removing Swaps (click here to add swaps)",editRemoveTextureSwap,NULL);
+                else
+                    addEntryToMenu(textureMenu,"Adding Swaps (click here to remove swaps)",editRemoveTextureSwap,NULL);
+                addEntryToMenu(textureMenu," ",NULL,NULL);
+                editCmdAddBasicTexturesToMenu(textureMenu,edit_state.textureSwapTracker);
+                editCmdAddCompositeTexturesToMenu(textureMenu,edit_state.textureSwapTracker);
+                //open up the menus for those lazy artists :-P
+                {
+                    MenuEntry * me=textureMenu->root->child;
+                    while (me!=NULL) {
+                        if (strcmp(me->name,"Textures"))
+                            me->opened=1;
+                        if (strcmp(me->name,"Materials"))
+                            me->opened=1;
+                        me=me->sibling;
+                    }
+                    textureMenu->root->opened=1;
+                }
+                textureMenu->lv->amountScrolled=scrolled;
+            }
+        }
     }
+    if ((!edit_state.textureSwap) || (!edit_state.textureSwapTracker || !edit_state.textureSwapTracker->def)) {
+        if (textureMenu && textureMenu->lv) {
+            x=textureMenu->lv->x;
+            y=textureMenu->lv->y;
+            width=textureMenu->lv->width;
+            height=textureMenu->lv->height;
+            scrolled=textureMenu->lv->amountScrolled;
+        }
+        if (textureMenu!=NULL)
+            destroyMenu(textureMenu);
+        textureMenu=0;
+        if (edit_state.textureSwapTracker==sel_list[0].def_tracker && sel_list[0].def_tracker &&
+            edit_state.textureSwapModTime<sel_list[0].def_tracker->def_mod_time) {
+                if (edit_state.textureSwapReopen) {
+                    edit_state.textureSwapReopen=0;
+                    edit_state.textureSwap=1;
+                } else {
+                    edit_state.textureSwapRemove=0;
+                    edit_state.textureSwapRandom=0;
+                    edit_state.textureSwapReopen=0;
+                }
+            }
+    }
+}
 
-    PERFINFO_AUTO_STOP_START("edit", 1);
-
-    // edit
-    if (edit_state.copy || edit_state.cut)
-        editCmdCutCopy();
-    if (edit_state.paste)
-        editCmdPaste();
-    if (edit_state.del)
-        editCmdDelete();
-    if (edit_state.libdel)
-        editCmdLibDelete();
-    if (edit_state.undo)
-        editUndo();
-    if (edit_state.redo)
-        editRedo();
-
-    if (edit_state.reload) // MUST be after others (specifically Save and SaveLibs)
-        editLoad(game_state.world_name, 0);
-
-    PERFINFO_AUTO_STOP_START("debug things", 1);
-
+// Per-frame debug/selection update and context-menu handling.
+static void editProcessDebugCommands(Vec3 start, Vec3 end, int lost_focus)
+{
     // various debug things
     select_took_focus = selUpdate(start,end,lost_focus);
     selShow();
@@ -659,6 +663,112 @@ void editProcess()
             editContextMenuShow(x, y, !!inpLevel(INP_CONTROL));
         }
     }
+}
+
+void editProcess()
+{
+    DefTracker *tracker;
+    Vec3    start,end;
+    int        lost_focus;
+    int        old_cache_disabled;
+
+    if(entDebugMenuVisible())
+        edit_state.sel = 0;
+
+    if (!editHousekeeping(&lost_focus))
+    {
+        return;
+    }
+
+    PERFINFO_AUTO_START("mouseOverSel", 1);
+
+    old_cache_disabled = gridSetCacheDisabled(1);
+    tracker = mouseOverSel(start,end,lost_focus);
+    gridSetCacheDisabled(old_cache_disabled);
+
+    PERFINFO_AUTO_STOP_START("file", 1);
+
+    // file
+    editProcessFileCommands();
+
+    PERFINFO_AUTO_STOP_START("copy/paste", 1);
+
+    editProcessCopyPasteCommands();
+
+    PERFINFO_AUTO_STOP_START("group", 1);
+
+    // group
+    editProcessGroupCommands();
+
+    PERFINFO_AUTO_STOP_START("hideMenu", 1);
+
+    if (edit_state.hideMenu) {
+        hideAllELV();
+        edit_state.hideMenu=0;
+    }
+
+    PERFINFO_AUTO_STOP_START("group->LOD", 1);
+
+    // group->LOD
+    editProcessLodCommands();
+
+    PERFINFO_AUTO_STOP_START("beacons", 1);
+
+    // adjust->beacons
+    editProcessBeaconCommands();
+
+    PERFINFO_AUTO_STOP_START("adjust/light", 1);
+
+    editProcessLightCommands();
+
+    PERFINFO_AUTO_STOP_START("adjust/cubemap", 1);
+
+    editProcessCubemapCommands();
+
+    PERFINFO_AUTO_STOP_START("adjust/fog", 1);
+
+    // adjust->fog
+    editProcessFogCommands();
+
+    PERFINFO_AUTO_STOP_START("adjust/tinttex", 1);
+
+    // adjust->tinttex
+    editProcessTintTexCommands();
+
+    editProcessTextureSwapMenu();
+
+    mapGeneratorUpkeep(&edit_state.mapGeneration);
+
+
+
+    PERFINFO_AUTO_STOP_START("adjust/sound", 1);
+
+    // adjust->sound
+    editProcessSoundCommands();
+
+    PERFINFO_AUTO_STOP_START("adjust/properties", 1);
+
+    // adjust->properties
+    editProcessPropertyCommands();
+
+    PERFINFO_AUTO_STOP_START("select", 1);
+
+    editProcessSelectCommands(tracker, &lost_focus);
+
+    if (!editProcessBurningDestroyableCommands())
+        return;
+
+    PERFINFO_AUTO_STOP_START("search", 1);
+
+    editProcessSearchCommands();
+
+    PERFINFO_AUTO_STOP_START("edit", 1);
+
+    editProcessEditCommands();
+
+    PERFINFO_AUTO_STOP_START("debug things", 1);
+
+    editProcessDebugCommands(start, end, lost_focus);
 
     //JW: my own testing stuff goes here
     /*    {

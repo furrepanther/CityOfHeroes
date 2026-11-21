@@ -543,6 +543,10 @@ void editorReplayWrapperContinue(MenuEntry * me,ClickInfo * ci) {
 }
 */
 
+static void commandMenuAddFileEntries(MenuEntry **autosaveMenuEntry);
+static void commandMenuAddGroupEntries(void);
+static void commandMenuAddAdjustEntries(void);
+
 void commandMenuCreate() {
     MenuEntry *autosaveMenuEntry;
 #define COMMAND_MENU_FUNC_1        (void *)0        //toggles
@@ -552,106 +556,11 @@ void commandMenuCreate() {
     commandMenu=newMenu(-235,-76,222,215,"Command");
     commandMenu->lv->theWindowCorner=EDIT_LIST_VIEW_LOWERRIGHT;
     commandMenu->lv->growUp=1;
-    addEntryToMenu(commandMenu,"file/load"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"file/import"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"file/new"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"file/save    ^2f7"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    commandMenuAddFileEntries(&autosaveMenuEntry);
 
-    //autosave needs a little extra processing
-    autosaveMenuEntry=addEntryToMenu(commandMenu,"file/autosave",editCmdAutosave,COMMAND_MENU_FUNC_1);    //editCmdAutosave makes sure
-                                                                        //that the message displayed
-                                                                        //in the menu is consistent
-                                                                        //with the time between autosaves
-    estrPrintf(&autosaveMenuEntry->name, "autosave ON: %dm", edit_state.autosavewait/(60*CLK_TCK));
+    commandMenuAddGroupEntries();
 
-    addEntryToMenu(commandMenu,"file/savesel"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"file/exportsel"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"file/saveas"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"file/scenefile"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"file/loadscreen"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"file/clientsave"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    commandMenuUpdateRecentMaps(NULL);
-
-    addEntryToMenu(commandMenu,"group/group      ^2g"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/ungroup    ^2u"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/del        ^2del",commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/libdel"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/open       ^2["    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/close      ^2]"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/setparent"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/attach"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/detach"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/name"                ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/makelibs"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/savelibs"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/setpivot   ^2f8"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/settype"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/setfx"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/trayswap"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/noFogClip"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/noColl"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/makeDestructibleObject",commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-
-    addEntryToMenu(commandMenu,"group/lod/copyAutoLodParams",commandMenuClickFunc,COMMAND_MENU_FUNC);
-    addEntryToMenu(commandMenu,"group/lod/lodscale"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/lod/lodfar"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/lod/lodfarfade"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/lod/loddisable"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/lod/lodenable"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/lod/lodfadenode"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"group/lod/lodfadenode2"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-
-    addEntryToMenu(commandMenu,"adjust/beacons/beaconname"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/beacons/beaconsize     ^2b"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
-    addEntryToMenu(commandMenu,"adjust/beacons/showconnection ^2o"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/beacons/beaconradii"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
-    addEntryToMenu(commandMenu,"adjust/beacons/beaconselect   ^20"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
-
-    addEntryToMenu(commandMenu,"adjust/volumes/boxscale"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-
-    addEntryToMenu(commandMenu,"adjust/light/setambient"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/light/unsetambient"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/light/maxbright"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/light/lightcolor"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/light/lightsize"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
-
-    addEntryToMenu(commandMenu,"adjust/fog/fognear"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/fog/fogfar"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/fog/fogcolor1"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/fog/fogcolor2"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/fog/fogsize"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
-    addEntryToMenu(commandMenu,"adjust/fog/fogspeed"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-
-    addEntryToMenu(commandMenu,"adjust/tinttex/tintcolor1"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/tinttex/tintcolor2"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/tinttex/replacetex1"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/tinttex/replacetex2"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/tinttex/removetex"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/tinttex/textureSwap"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/tinttex/editTexWord"    ,commandMenuClickFunc,COMMAND_MENU_FUNC);
-
-    addEntryToMenu(commandMenu,"adjust/sound/soundvol"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/sound/soundsize"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
-    addEntryToMenu(commandMenu,"adjust/sound/soundramp"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/sound/soundname"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/sound/soundfind"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/sound/soundexclude"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/sound/soundscript"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-
-    addEntryToMenu(commandMenu,"adjust/properties/addProp      ^2a"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/properties/removeProp"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/properties/showAsRadius"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/properties/showAsString"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/properties/copyProperties"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/properties/pasteProperties"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-
-    addEntryToMenu(commandMenu,"adjust/burningBuildings/controller"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/burningBuildings/destroy"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    addEntryToMenu(commandMenu,"adjust/burningBuildings/repair"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-
-    edit_state.burningBuildingMenuEntry = addEntryToMenu(commandMenu,"adjust/burningBuildings/speed 0%",commandMenuClickFunc,COMMAND_MENU_FUNC_1);
-    estrPrintf(&edit_state.burningBuildingMenuEntry->name, "speed 0.000000%%/s");
-    addEntryToMenu(commandMenu,"adjust/burningBuildings/stop"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    commandMenuAddAdjustEntries();
 
     addEntryToMenu(commandMenu,"select/cut              ^2x"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
     addEntryToMenu(commandMenu,"select/copy             ^2c"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
@@ -726,6 +635,116 @@ void commandMenuCreate() {
 //    addEntryToMenu(commandMenu,"menu/useOldMenu"            ,useOldMenu,NULL);
 //    addEntryToMenu(commandMenu,"menu/hideMenu"                ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
 };
+
+static void commandMenuAddFileEntries(MenuEntry **autosaveMenuEntry)
+{
+    addEntryToMenu(commandMenu,"file/load"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"file/import"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"file/new"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"file/save    ^2f7"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+
+    //autosave needs a little extra processing
+    *autosaveMenuEntry=addEntryToMenu(commandMenu,"file/autosave",editCmdAutosave,COMMAND_MENU_FUNC_1);    //editCmdAutosave makes sure
+                                                                        //that the message displayed
+                                                                        //in the menu is consistent
+                                                                        //with the time between autosaves
+    estrPrintf(&(*autosaveMenuEntry)->name, "autosave ON: %dm", edit_state.autosavewait/(60*CLK_TCK));
+
+    addEntryToMenu(commandMenu,"file/savesel"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"file/exportsel"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"file/saveas"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"file/scenefile"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"file/loadscreen"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"file/clientsave"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    commandMenuUpdateRecentMaps(NULL);
+}
+
+static void commandMenuAddGroupEntries(void)
+{
+    addEntryToMenu(commandMenu,"group/group      ^2g"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/ungroup    ^2u"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/del        ^2del",commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/libdel"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/open       ^2["    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/close      ^2]"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/setparent"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/attach"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/detach"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/name"                ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/makelibs"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/savelibs"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/setpivot   ^2f8"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/settype"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/setfx"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/trayswap"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/noFogClip"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/noColl"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/makeDestructibleObject",commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+
+    addEntryToMenu(commandMenu,"group/lod/copyAutoLodParams",commandMenuClickFunc,COMMAND_MENU_FUNC);
+    addEntryToMenu(commandMenu,"group/lod/lodscale"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/lod/lodfar"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/lod/lodfarfade"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/lod/loddisable"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/lod/lodenable"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/lod/lodfadenode"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"group/lod/lodfadenode2"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+}
+
+static void commandMenuAddAdjustEntries(void)
+{
+    addEntryToMenu(commandMenu,"adjust/beacons/beaconname"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/beacons/beaconsize     ^2b"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
+    addEntryToMenu(commandMenu,"adjust/beacons/showconnection ^2o"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/beacons/beaconradii"            ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
+    addEntryToMenu(commandMenu,"adjust/beacons/beaconselect   ^20"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
+
+    addEntryToMenu(commandMenu,"adjust/volumes/boxscale"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+
+    addEntryToMenu(commandMenu,"adjust/light/setambient"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/light/unsetambient"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/light/maxbright"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/light/lightcolor"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/light/lightsize"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
+
+    addEntryToMenu(commandMenu,"adjust/fog/fognear"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/fog/fogfar"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/fog/fogcolor1"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/fog/fogcolor2"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/fog/fogsize"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
+    addEntryToMenu(commandMenu,"adjust/fog/fogspeed"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+
+    addEntryToMenu(commandMenu,"adjust/tinttex/tintcolor1"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/tinttex/tintcolor2"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/tinttex/replacetex1"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/tinttex/replacetex2"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/tinttex/removetex"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/tinttex/textureSwap"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/tinttex/editTexWord"    ,commandMenuClickFunc,COMMAND_MENU_FUNC);
+
+    addEntryToMenu(commandMenu,"adjust/sound/soundvol"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/sound/soundsize"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_ON);
+    addEntryToMenu(commandMenu,"adjust/sound/soundramp"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/sound/soundname"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/sound/soundfind"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/sound/soundexclude"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/sound/soundscript"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+
+    addEntryToMenu(commandMenu,"adjust/properties/addProp      ^2a"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/properties/removeProp"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/properties/showAsRadius"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/properties/showAsString"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/properties/copyProperties"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/properties/pasteProperties"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+
+    addEntryToMenu(commandMenu,"adjust/burningBuildings/controller"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/burningBuildings/destroy"    ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    addEntryToMenu(commandMenu,"adjust/burningBuildings/repair"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+
+    edit_state.burningBuildingMenuEntry = addEntryToMenu(commandMenu,"adjust/burningBuildings/speed 0%",commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+    estrPrintf(&edit_state.burningBuildingMenuEntry->name, "speed 0.000000%%/s");
+    addEntryToMenu(commandMenu,"adjust/burningBuildings/stop"        ,commandMenuClickFunc,COMMAND_MENU_FUNC_1);
+}
 
 void loadObject(char * name) {
     sel.fake_ref.def = groupDefFind(name);
@@ -1033,16 +1052,15 @@ static int libraryMenuColorCallback(MenuEntry *entry, void *data)
     return libraryMenuColorFunc(entry, (ClickInfo*)data);
 }
 
-void libUpdateList()
+static void libUpdateListInitializeMenu(int all_count)
 {
-    int        i,count=0,all_count;
-    char    *s,*name,*dir;
-    static int last_showall,last_countall;
     static int menuInit=0;
-    all_count = objectLibraryCount();
 
     if (!menuInit && lib_list_count>0) {
+        int i;
+        char *name,*dir;
         char buffer[255];
+
         allLibraryObjectNames=stashTableCreateWithStringKeys(all_count, StashDefault);
         menuInit=1;
         libraryMenu = newMenu(15,25,300,450,"Library");
@@ -1064,19 +1082,13 @@ void libUpdateList()
             FolderCacheSetCallback(FOLDER_CACHE_CALLBACK_UPDATE_AND_DELETE, "*.txt", createFavoritesMenuCallback);
         }
     }
+}
 
-    if (recreateFavoritesMenu)
-    {
-        recreateFavoritesMenu=0;
-        destroyMenu(favoritesMenu);
-        createFavoritesMenu();
-    }
+static int libUpdateListBuildList(int all_count)
+{
+    int i,count=0;
+    char    *s,*name,*dir;
 
-    if (last_showall == edit_state.showall && last_countall == all_count)
-        return;
-    last_showall = edit_state.showall;
-    last_countall = all_count;
-    lib_list_count = 0;
     dynArrayFit(&lib_list,sizeof(lib_list[0]),&lib_list_max,all_count);
     lib_scroll.list_names = lib_list[0].name;
     for(i=0;i<all_count;i++)
@@ -1100,7 +1112,30 @@ void libUpdateList()
         sprintf(lib_list[count].name,"%s/%s",buf,name);
         count++;
     }
-    lib_list_count = count;
+    return count;
+}
+
+void libUpdateList()
+{
+    int        all_count;
+    static int last_showall,last_countall;
+    all_count = objectLibraryCount();
+
+    libUpdateListInitializeMenu(all_count);
+
+    if (recreateFavoritesMenu)
+    {
+        recreateFavoritesMenu=0;
+        destroyMenu(favoritesMenu);
+        createFavoritesMenu();
+    }
+
+    if (last_showall == edit_state.showall && last_countall == all_count)
+        return;
+    last_showall = edit_state.showall;
+    last_countall = all_count;
+    lib_list_count = 0;
+    lib_list_count = libUpdateListBuildList(all_count);
 }
 
 static int countMenuLines(MenuEntry *me, MenuEntry *selected, int *count)
@@ -1178,6 +1213,104 @@ typedef struct
 TrackerScrollEnt    tracker_list[1000];
 int                    tracker_list_count,tracker_list_skip;
 
+static int trackerUpdateListAddEntry(int ref_id,DefTracker *tracker,int depth,char **so)
+{
+    int i;
+    TrackerScrollEnt    *trk_ent;
+    const char*    si;
+
+    if (tracker_list_count >= ARRAY_SIZE(tracker_list))
+        return 0;
+    trk_ent = &tracker_list[tracker_list_count++];
+    trk_ent->def = tracker;
+    trk_ent->ref_id = ref_id;
+    *so = trk_ent->name;
+    si = strrchr(tracker->def->name,'/');
+    if (!si++)
+        si = tracker->def->name;
+    memset(*so,' ',depth+1);
+    if (tracker->def->count)
+        (*so)[depth] = '+';
+
+    strcpy(*so+depth+1,si);
+
+    if (tracker->def->has_ambient)
+    {
+        strcat(*so, "-AMB");
+    }
+
+    if (tracker->def->has_tint_color)
+    {
+        strcat(*so, "-TINT");
+    }
+
+    if (tracker->def->has_tex)
+    {
+        strcat(*so, "-TEX");
+    }
+
+    if (tracker->def->lod_fadenode==1)
+    {
+        strcat(*so, "-FADE");
+    }
+
+    if (tracker->def->lod_fadenode==2)
+    {
+        strcat(*so, "-FADE2");
+    }
+
+    if (tracker->def->no_fog_clip)
+    {
+        strcat(*so, "-NOFOGCLIP");
+    }
+
+    if (tracker->def->no_coll)
+    {
+        strcat(*so, "-NOCOLL");
+    }
+
+    // A hash mark means the group has properties attached.
+    if (tracker->def->has_properties)
+    {
+        //If this is a Layer,
+        PropertyEnt* layerProp;
+        stashFindPointer(  tracker->def->properties, "Layer" , &layerProp );
+
+        if( layerProp )
+        {
+            extern EditSelect sel;
+            if( tracker == sel.activeLayer ) //maybe also check ids?
+            {
+                strcat( *so, " Active");
+            }
+            strcat( *so, " Layer" );
+        }
+        else
+            strcat(*so,"#");
+    }
+
+    // Show the "type" on the actual group.  It's quite hard to go looking for a group
+    // of a particular type otherwise.
+    if (tracker->def->type_name && tracker->def->type_name[0])
+    {
+        strcat(*so, "(");
+        strcat(*so, tracker->def->type_name);
+        strcat(*so, ")");
+    }
+
+    for(i=0;i<sel_count;i++)
+    {
+        if (tracker == sel_list[i].def_tracker)
+        {
+            strcat(*so,"*");
+            break;
+        }
+    }
+    if (tracker->tricks && (tracker->tricks->flags1 & TRICK_HIDE))
+        strcat(*so,"~");
+    return 1;
+}
+
 int trackerScrollCallback(char *name,int idx)
 {
     edit_state.last_selected_tracker = tracker_list[idx].def;
@@ -1223,103 +1356,13 @@ void trackerUpdateList(int ref_id,DefTracker *tracker,int depth)
 {
     char    *so = NULL;
     int        i;
-    TrackerScrollEnt    *trk_ent;
 
     if (!tracker || !tracker->def || !tracker->def->in_use)
         return;
     if (++tracker_list_skip > start_draw_offset)
     {
-        const char*    si;
-
-        if (tracker_list_count >= ARRAY_SIZE(tracker_list))
+        if (!trackerUpdateListAddEntry(ref_id,tracker,depth,&so))
             return;
-        trk_ent = &tracker_list[tracker_list_count++];
-        trk_ent->def = tracker;
-        trk_ent->ref_id = ref_id;
-        so = trk_ent->name;
-        si = strrchr(tracker->def->name,'/');
-        if (!si++)
-            si = tracker->def->name;
-        memset(so,' ',depth+1);
-        if (tracker->def->count)
-            so[depth] = '+';
-
-        strcpy(so+depth+1,si);
-
-        if (tracker->def->has_ambient)
-        {
-            strcat(so, "-AMB");
-        }
-
-        if (tracker->def->has_tint_color)
-        {
-            strcat(so, "-TINT");
-        }
-
-        if (tracker->def->has_tex)
-        {
-            strcat(so, "-TEX");
-        }
-
-        if (tracker->def->lod_fadenode==1)
-        {
-            strcat(so, "-FADE");
-        }
-
-        if (tracker->def->lod_fadenode==2)
-        {
-            strcat(so, "-FADE2");
-        }
-
-        if (tracker->def->no_fog_clip)
-        {
-            strcat(so, "-NOFOGCLIP");
-        }
-
-        if (tracker->def->no_coll)
-        {
-            strcat(so, "-NOCOLL");
-        }
-
-        // A hash mark means the group has properties attached.
-        if (tracker->def->has_properties)   
-        {
-            //If this is a Layer, 
-            PropertyEnt* layerProp; 
-            stashFindPointer(  tracker->def->properties, "Layer" , &layerProp );
-            
-            if( layerProp )
-            {
-                extern EditSelect sel;
-                if( tracker == sel.activeLayer ) //maybe also check ids?
-                {
-                    strcat( so, " Active");
-                }
-                strcat( so, " Layer" );        
-            }
-            else
-                strcat(so, "#");
-        }
-
-        // Show the "type" on the actual group.  It's quite hard to go looking for a group
-        // of a particular type otherwise.
-        if (tracker->def->type_name && tracker->def->type_name[0])
-        {
-            strcat(so, "(");
-            strcat(so, tracker->def->type_name);
-            strcat(so, ")");
-        }
-
-        for(i=0;i<sel_count;i++)
-        {
-            if (tracker == sel_list[i].def_tracker)
-            {
-                strcat(so,"*");
-                break;
-            }
-        }
-        if (tracker->tricks && (tracker->tricks->flags1 & TRICK_HIDE))
-            strcat(so,"~");
     }
 
     for(i=0;i<tracker->count;i++)
@@ -1774,6 +1817,97 @@ static int compareStringForQSort(const void* aData, const void* bData) {
     return stricmp((*a)->name,(*b)->name);
 }
 
+static void editShowLibraryInitializeScrolls(void)
+{
+    uiScrollInit(&lib_scroll);
+    lib_scroll.list_step = sizeof(lib_list[0]);
+    lib_scroll.list_names = lib_list[0].name;
+    lib_scroll.list_count = 0;
+    lib_scroll.xpos = 8;
+    lib_scroll.ypos = 34;
+    lib_scroll.maxlines = 32;
+    lib_scroll.maxcols = 32;
+    lib_scroll.callback = libScrollCallback;
+    lib_scroll.mouseDrag = 0;
+    strcpy(lib_scroll.header,"groups");
+
+    uiScrollInit(&cmd_scroll);
+    cmd_scroll.list_step = sizeof(CmdScrollEnt);
+    cmd_scroll.list_names = cmd_scroll_ents[0].name;
+    cmd_scroll.list_count = ARRAY_SIZE(cmd_scroll_ents);
+    cmd_scroll.xpos = 56*8 + TEXT_JUSTIFY;
+    cmd_scroll.ypos = 51*8 + TEXT_JUSTIFY;
+    cmd_scroll.maxlines = 10;
+    cmd_scroll.maxcols = 24;
+    cmd_scroll.grow_upwards = 1;
+    cmd_scroll.callback = cmdScrollCallback;
+    cmd_scroll.mouseDrag = 0;
+    strcpy(cmd_scroll.header,"commands");
+
+    trackerUpdateList(0,0,0);
+    uiScrollInit(&tracker_scroll);
+    tracker_scroll.list_step = sizeof(TrackerScrollEnt);
+    tracker_scroll.list_names = tracker_list[0].name;
+    tracker_scroll.list_count = tracker_list_count;
+    tracker_scroll.xpos = 50*8 + TEXT_JUSTIFY;
+    tracker_scroll.ypos = 34;
+    tracker_scroll.maxlines = 30;
+    tracker_scroll.maxcols = 30;
+    tracker_scroll.grow_upwards = 0;
+    tracker_scroll.callback = trackerScrollCallback;
+    tracker_scroll.rollover = trackerScrollRollover;
+    tracker_scroll.mouseDrag = 1;
+    strcpy(tracker_scroll.header,"open groups");
+
+    uiScroll2Init(&property_name_scroll);
+    property_name_scroll.list_step = sizeof(PropertyEnt);
+    property_name_scroll.list_names = NULL; //property_list[0].name_str;
+    property_name_scroll.list_count = 0; //property_list_count;
+    property_name_scroll.xpos = 8;
+    property_name_scroll.ypos = 59 * 8 + TEXT_JUSTIFY;
+    property_name_scroll.maxlines = 9;
+    property_name_scroll.maxcols = 20;
+    property_name_scroll.grow_upwards = 1;
+    property_name_scroll.callback = propNameScrollCallback;
+    property_name_scroll.callbackOnly = 0;
+    property_name_scroll.linkedScroll = &property_value_scroll;
+    strcpy(property_name_scroll.header,"Properties");
+
+    uiScroll2Init(&property_value_scroll);
+    property_value_scroll.list_step = sizeof(PropertyEnt);
+    property_value_scroll.list_names = NULL; //property_list[0].value_str;
+    property_value_scroll.list_count = 0; //property_list_count;
+    property_value_scroll.xpos = 22 * 8;
+    property_value_scroll.ypos = 59 * 8 + TEXT_JUSTIFY;
+    property_value_scroll.maxlines = 9;
+    property_value_scroll.maxcols = 8;
+    property_value_scroll.grow_upwards = 1;
+    property_value_scroll.callback = propValueScrollCallback;
+    property_value_scroll.callbackOnly = 1;
+    property_value_scroll.linkedScroll = &property_name_scroll;
+    strcpy(property_value_scroll.header,"Value");
+}
+
+static void editShowLibraryInitializePropertyDefs(void)
+{
+    ParserLoadFiles(NULL, "defs/properties.def", NULL,
+        0, ParsePropertyDefList, &g_propertyDefList, NULL,NULL,NULL);
+    FolderCacheSetCallback(FOLDER_CACHE_CALLBACK_UPDATE_AND_DELETE, "defs/properties.def", noteChangedProperties);
+    {
+        PropertyDef * pdef=ParserAllocStruct(sizeof(PropertyDef));
+        memset(pdef,0,sizeof(PropertyDef));
+        pdef->name=ParserAllocString(" ");
+        eaPush(&g_propertyDefList.list,pdef);
+    }
+    {
+        PropertyDef * pdef=ParserAllocStruct(sizeof(PropertyDef));
+        memset(pdef,0,sizeof(PropertyDef));
+        pdef->name=ParserAllocString("Other...");
+        eaPush(&g_propertyDefList.list,pdef);
+    }
+    qsort(g_propertyDefList.list,eaSize(&g_propertyDefList.list)-1,sizeof(PropertyDef *),compareStringForQSort);
+}
+
 int editShowLibrary(int lost_focus)
 {
 static int init;
@@ -1785,94 +1919,13 @@ int        i,focus;
     {
         init = 1;
 
-        uiScrollInit(&lib_scroll); 
-        lib_scroll.list_step = sizeof(lib_list[0]);
-        lib_scroll.list_names = lib_list[0].name;
-        lib_scroll.list_count = 0;
-        lib_scroll.xpos = 8;
-        lib_scroll.ypos = 34;
-        lib_scroll.maxlines = 32;
-        lib_scroll.maxcols = 32;
-        lib_scroll.callback = libScrollCallback;
-        lib_scroll.mouseDrag = 0;
-        strcpy(lib_scroll.header,"groups");
-
-        uiScrollInit(&cmd_scroll);
-        cmd_scroll.list_step = sizeof(CmdScrollEnt);
-        cmd_scroll.list_names = cmd_scroll_ents[0].name;
-        cmd_scroll.list_count = ARRAY_SIZE(cmd_scroll_ents);
-        cmd_scroll.xpos = 56*8 + TEXT_JUSTIFY;
-        cmd_scroll.ypos = 51*8 + TEXT_JUSTIFY;
-        cmd_scroll.maxlines = 10;
-        cmd_scroll.maxcols = 24;
-        cmd_scroll.grow_upwards = 1;
-        cmd_scroll.callback = cmdScrollCallback;
-        cmd_scroll.mouseDrag = 0;
-        strcpy(cmd_scroll.header,"commands");
-
-        trackerUpdateList(0,0,0);
-        uiScrollInit(&tracker_scroll);
-        tracker_scroll.list_step = sizeof(TrackerScrollEnt);
-        tracker_scroll.list_names = tracker_list[0].name;
-        tracker_scroll.list_count = tracker_list_count;
-        tracker_scroll.xpos = 50*8 + TEXT_JUSTIFY;
-        tracker_scroll.ypos = 34;
-        tracker_scroll.maxlines = 30;
-        tracker_scroll.maxcols = 30;
-        tracker_scroll.grow_upwards = 0;
-        tracker_scroll.callback = trackerScrollCallback;
-        tracker_scroll.rollover = trackerScrollRollover;
-        tracker_scroll.mouseDrag = 1;
-        strcpy(tracker_scroll.header,"open groups");
-
-        uiScroll2Init(&property_name_scroll);
-        property_name_scroll.list_step = sizeof(PropertyEnt);
-        property_name_scroll.list_names = NULL; //property_list[0].name_str;
-        property_name_scroll.list_count = 0; //property_list_count;
-        property_name_scroll.xpos = 8;
-        property_name_scroll.ypos = 59 * 8 + TEXT_JUSTIFY;
-        property_name_scroll.maxlines = 9;
-        property_name_scroll.maxcols = 20;
-        property_name_scroll.grow_upwards = 1;
-        property_name_scroll.callback = propNameScrollCallback;
-        property_name_scroll.callbackOnly = 0;
-        property_name_scroll.linkedScroll = &property_value_scroll;
-        strcpy(property_name_scroll.header,"Properties");
-
-        uiScroll2Init(&property_value_scroll);
-        property_value_scroll.list_step = sizeof(PropertyEnt);
-        property_value_scroll.list_names = NULL; //property_list[0].value_str;
-        property_value_scroll.list_count = 0; //property_list_count;
-        property_value_scroll.xpos = 22 * 8;
-        property_value_scroll.ypos = 59 * 8 + TEXT_JUSTIFY;
-        property_value_scroll.maxlines = 9;
-        property_value_scroll.maxcols = 8;
-        property_value_scroll.grow_upwards = 1;
-        property_value_scroll.callback = propValueScrollCallback;
-        property_value_scroll.callbackOnly = 1;
-        property_value_scroll.linkedScroll = &property_name_scroll;
-        strcpy(property_value_scroll.header,"Value");
+        editShowLibraryInitializeScrolls();
 
         //the new Menus 
         trackerListViewCreate();
         commandMenuCreate();
 
-        ParserLoadFiles(NULL, "defs/properties.def", NULL,
-            0, ParsePropertyDefList, &g_propertyDefList, NULL,NULL,NULL);
-        FolderCacheSetCallback(FOLDER_CACHE_CALLBACK_UPDATE_AND_DELETE, "defs/properties.def", noteChangedProperties);
-        {
-            PropertyDef * pdef=ParserAllocStruct(sizeof(PropertyDef));
-            memset(pdef,0,sizeof(PropertyDef));
-            pdef->name=ParserAllocString(" ");
-            eaPush(&g_propertyDefList.list,pdef);
-        }
-        {
-            PropertyDef * pdef=ParserAllocStruct(sizeof(PropertyDef));
-            memset(pdef,0,sizeof(PropertyDef));
-            pdef->name=ParserAllocString("Other...");
-            eaPush(&g_propertyDefList.list,pdef);
-        }
-        qsort(g_propertyDefList.list,eaSize(&g_propertyDefList.list)-1,sizeof(PropertyDef *),compareStringForQSort);
+        editShowLibraryInitializePropertyDefs();
     }
 
     if (reloadPropertiesDef) {
