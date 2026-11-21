@@ -308,6 +308,110 @@ int selectLassoFrustrum(DefTracker * tracker,Vec4 planes[5],int layer,int selAdd
     return 0;
 }
 
+static void editCmdLassoBuildPlanes(int urx,int ury,int llx,int lly,Vec4 planes[5])
+{
+    int i;
+    Vec3 v1,v2,buff,buff2;
+    Vec3 normals[5];    //normals of 5 planes
+    Vec3 points[5];        //1 point in each, no far plane, since we might as well select
+                        //everything all the way to infinity
+    Vec3 farPoints[4];    //corresponding far points for each of the sides of the frustrum
+    Mat4 cameraInverted;//inverted camera matrix
+    Vec3 frustrum[8];    //8 points of the frustrum
+
+    invertMat4Copy(cam_info.cammat,cameraInverted);
+
+    gfxCursor3d(urx,ury,10,buff,buff2);
+    copyVec3(buff,points[0]);
+    copyVec3(buff2,farPoints[0]);
+    gfxCursor3d(urx,lly,10,buff,buff2);
+    copyVec3(buff,points[1]);
+    copyVec3(buff2,farPoints[1]);
+    gfxCursor3d(llx,lly,10,buff,buff2);
+    copyVec3(buff,points[2]);
+    copyVec3(buff2,farPoints[2]);
+    gfxCursor3d(llx,ury,10,buff,buff2);
+    copyVec3(buff,points[3]);
+    copyVec3(buff2,farPoints[3]);
+    copyVec3(points[3],points[4]);                        //we can use one of the previous points for the
+                                                            //near plane as well
+    for (i=0;i<=4;i++) {
+        int j=0;
+        for (j=0;j<=2;j++)
+            points[i][j]*=1;
+    }
+    for (i=0;i<4;i++) {
+        int j=0;
+        for (j=0;j<=2;j++)
+            farPoints[i][j]*=1;
+    }
+    gfxCursor3d(urx,ury,-10,frustrum[0],frustrum[4]);
+    gfxCursor3d(urx,lly,-10,frustrum[1],frustrum[5]);
+    gfxCursor3d(llx,lly,-10,frustrum[2],frustrum[6]);
+    gfxCursor3d(llx,ury,-10,frustrum[3],frustrum[7]);
+                                                        //near plane as well
+
+    for (i=0;i<=3;i++) {                                //this figures out the normal to each side
+        subVec3(points[(i+1)%4],points[i],v1);            //of the lasso frustrum
+        subVec3(farPoints[i],points[i],v2);
+        crossVec3(v1,v2,normals[i]);
+    }
+    subVec3(points[0],points[4],v1);                        //the near plane is a slightly special case
+    subVec3(points[2],points[4],v2);                    //since it is totally defined by points
+    crossVec3(v2,v1,normals[4]);
+
+    for (i=0;i<=4;i++) {                                //compute the equation for the plane of each side
+        int j;                                            //ax+by+cx+d=0
+        planes[i][3]=0;
+        for (j=0;j<3;j++) {
+            planes[i][j]=normals[i][j];                    //a,b,c computed here
+            planes[i][3]-=normals[i][j]*points[i][j];    //d computed here
+        }
+    }
+}
+
+static void editCmdLassoApplySelection(Vec4 planes[5])
+{
+    int i;
+
+    //now that we have the planes, plugging a point into each equation will tell us on what side of that
+    //plane it lies, if a point lies on the same side of every plane, then it is in the lasso frustrum
+    if (edit_state.lassoExclusive)
+        unSelect(1);
+//            for (i=sel_count-1;i>=0;i--)
+//                selAdd(sel_list[i].def_tracker,sel_list[i].id,2,EDITOR_LIST);
+    for (i=0;i<group_info.ref_count;i++) {
+        int opened=0;
+        int selAddMode=2;
+        int lassoVal;
+        if (group_info.refs[i]->tricks!=NULL && (group_info.refs[i]->tricks->flags1 & TRICK_HIDE))
+            continue;
+        if (edit_state.lassoInvert)
+            selAddMode=2;
+        if (sel.activeLayer!=NULL && group_info.refs[i]!=sel.activeLayer)
+            continue;
+        if (group_info.refs[i]->count>0 && group_info.refs[i]->entries==NULL) {
+            trackerOpen(group_info.refs[i]);
+            opened=1;
+        }
+        lassoVal=selectLassoFrustrum(group_info.refs[i],planes,i,selAddMode);
+        if (lassoVal==1) {
+            selAdd(group_info.refs[i],i,2,EDITOR_LIST);
+        }
+        if (sel_count==0)
+            trackerCloseEdit(group_info.refs[i]);
+        //else if (lassoVal==0 && opened)
+        //    trackerClose(group_info.refs[i]);
+
+    }
+    edit_state.lassoX=-1;
+    edit_state.lassoY=-1;
+    edit_state.drawingLasso=0;
+    edit_state.lassoAdd=0;
+    edit_state.lassoInvert=0;
+    edit_state.lassoExclusive=0;
+}
+
 void editCmdLasso() {
     int mx,my;                //mouse coordinates
     int urx,ury,llx,lly;    //(x,y) for the upper-left and lower-left corners of the lasso
@@ -338,15 +442,7 @@ void editCmdLasso() {
     }
     if ( (!isDown(MS_LEFT)) && (edit_state.lassoX!=-1 && edit_state.lassoY!=-1)) {
         //select things in lasso
-        int i;
-        Vec3 v1,v2,buff,buff2;
-        Vec3 normals[5];    //normals of 5 planes
-        Vec3 points[5];        //1 point in each, no far plane, since we might as well select
-                            //everything all the way to infinity
-        Vec3 farPoints[4];    //corresponding far points for each of the sides of the frustrum
         Vec4 planes[5];        //the actual equations of the 5 planes
-        Mat4 cameraInverted;//inverted camera matrix
-        Vec3 frustrum[8];    //8 points of the frustrum
 
         if (urx==llx || ury==lly) {            //if the lasso is just a point or a line then don't try to
             edit_state.lassoX=-1;            //make a frustrum out of it, it would just do silly things
@@ -358,92 +454,9 @@ void editCmdLasso() {
             return;
         }
 
-        invertMat4Copy(cam_info.cammat,cameraInverted);
+        editCmdLassoBuildPlanes(urx,ury,llx,lly,planes);
 
-        gfxCursor3d(urx,ury,10,buff,buff2);
-        copyVec3(buff,points[0]);
-        copyVec3(buff2,farPoints[0]);
-        gfxCursor3d(urx,lly,10,buff,buff2);
-        copyVec3(buff,points[1]);
-        copyVec3(buff2,farPoints[1]);
-        gfxCursor3d(llx,lly,10,buff,buff2);
-        copyVec3(buff,points[2]);
-        copyVec3(buff2,farPoints[2]);
-        gfxCursor3d(llx,ury,10,buff,buff2);
-        copyVec3(buff,points[3]);
-        copyVec3(buff2,farPoints[3]);
-        copyVec3(points[3],points[4]);                        //we can use one of the previous points for the
-                                                                //near plane as well
-        for (i=0;i<=4;i++) {
-            int j=0;
-            for (j=0;j<=2;j++)
-                points[i][j]*=1;
-        }
-        for (i=0;i<4;i++) {
-            int j=0;
-            for (j=0;j<=2;j++)
-                farPoints[i][j]*=1;
-        }
-        gfxCursor3d(urx,ury,-10,frustrum[0],frustrum[4]);
-        gfxCursor3d(urx,lly,-10,frustrum[1],frustrum[5]);
-        gfxCursor3d(llx,lly,-10,frustrum[2],frustrum[6]);
-        gfxCursor3d(llx,ury,-10,frustrum[3],frustrum[7]);
-                                                            //near plane as well
-
-        for (i=0;i<=3;i++) {                                //this figures out the normal to each side
-            subVec3(points[(i+1)%4],points[i],v1);            //of the lasso frustrum
-            subVec3(farPoints[i],points[i],v2);
-            crossVec3(v1,v2,normals[i]);
-        }
-        subVec3(points[0],points[4],v1);                        //the near plane is a slightly special case
-        subVec3(points[2],points[4],v2);                    //since it is totally defined by points
-        crossVec3(v2,v1,normals[4]);
-
-        for (i=0;i<=4;i++) {                                //compute the equation for the plane of each side
-            int j;                                            //ax+by+cx+d=0
-            planes[i][3]=0;
-            for (j=0;j<3;j++) {
-                planes[i][j]=normals[i][j];                    //a,b,c computed here
-                planes[i][3]-=normals[i][j]*points[i][j];    //d computed here
-            }
-        }
-
-        //now that we have the planes, plugging a point into each equation will tell us on what side of that
-        //plane it lies, if a point lies on the same side of every plane, then it is in the lasso frustrum
-        if (edit_state.lassoExclusive)
-            unSelect(1);
-//            for (i=sel_count-1;i>=0;i--)
-//                selAdd(sel_list[i].def_tracker,sel_list[i].id,2,EDITOR_LIST);
-        for (i=0;i<group_info.ref_count;i++) {
-            int opened=0;
-            int selAddMode=2;
-            int lassoVal;
-            if (group_info.refs[i]->tricks!=NULL && (group_info.refs[i]->tricks->flags1 & TRICK_HIDE))
-                continue;
-            if (edit_state.lassoInvert)
-                selAddMode=2;
-            if (sel.activeLayer!=NULL && group_info.refs[i]!=sel.activeLayer)
-                continue;
-            if (group_info.refs[i]->count>0 && group_info.refs[i]->entries==NULL) {
-                trackerOpen(group_info.refs[i]);
-                opened=1;
-            }
-            lassoVal=selectLassoFrustrum(group_info.refs[i],planes,i,selAddMode);
-            if (lassoVal==1) {
-                selAdd(group_info.refs[i],i,2,EDITOR_LIST);
-            }
-            if (sel_count==0)
-                trackerCloseEdit(group_info.refs[i]);
-            //else if (lassoVal==0 && opened)
-            //    trackerClose(group_info.refs[i]);
-            
-        }
-        edit_state.lassoX=-1;
-        edit_state.lassoY=-1;
-        edit_state.drawingLasso=0;
-        edit_state.lassoAdd=0;
-        edit_state.lassoInvert=0;
-        edit_state.lassoExclusive=0;
+        editCmdLassoApplySelection(planes);
     }
     /* else {
         if (edit_state.lassoX!=-1 || edit_state.lassoY!=-1) {        //released after having drawn some lasso
